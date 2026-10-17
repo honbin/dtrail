@@ -102,7 +102,7 @@ fn carried_query_jumps_to_the_first_body_match() {
 }
 
 #[test]
-fn canceling_an_incremental_search_returns_to_the_origin() {
+fn canceling_a_search_returns_to_the_origin() {
     let mut view = conversation();
     let origin = view.cursor();
 
@@ -234,14 +234,16 @@ fn conversation_search_does_not_move_until_confirmed() {
     let mut app = App::with_session(claude::parse(&jsonl).0);
     app.conversation_mut().unwrap().sync_viewport(80, 10);
     let start = app.conversation().unwrap().cursor();
+    let rows = app.conversation().unwrap().total_rows();
 
-    // Typing the query must not scroll the body or jump the cursor.
+    // Typing the query must not scroll the body, jump the cursor, or reveal folds.
     app.start_search();
     for c in "needle".chars() {
         app.search_push(c);
     }
     assert_eq!(app.conversation().unwrap().cursor(), start);
     assert_eq!(app.conversation().unwrap().offset(), 0);
+    assert_eq!(app.conversation().unwrap().total_rows(), rows);
     assert_eq!(app.conversation().unwrap().match_info(), None);
 
     // Enter applies the search: jump to the match and report it.

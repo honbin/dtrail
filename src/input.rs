@@ -180,3 +180,143 @@ impl InputState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::{Agent, SessionEntry, claude};
+    use std::path::PathBuf;
+    use std::time::SystemTime;
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+    fn code(c: KeyCode) -> KeyEvent {
+        KeyEvent::new(c, KeyModifiers::NONE)
+    }
+
+    fn entry(project: &str) -> SessionEntry {
+        SessionEntry {
+            agent: Agent::Claude,
+            path: PathBuf::from("/x"),
+            session_id: "id".to_string(),
+            project: project.to_string(),
+            modified: Some(SystemTime::UNIX_EPOCH),
+            summary: "summary".to_string(),
+        }
+    }
+
+    fn list_app() -> App {
+        let mut app = App::with_entries(vec![entry("/a"), entry("/b"), entry("/c")]);
+        app.sync_list_viewport(10);
+        app
+    }
+
+    fn conversation_app() -> App {
+        let lines: Vec<String> = (0..40).map(|i| format!("line{i}")).collect();
+        let content = lines.join("\\n");
+        let jsonl = format!(
+            r#"{{"type":"user","sessionId":"s","message":{{"role":"user","content":"{content}"}}}}"#
+        );
+        let mut app = App::with_session(claude::parse(&jsonl).0);
+        app.conversation_mut().unwrap().sync_viewport(80, 10);
+        app
+    }
+
+    #[test]
+    fn q_quits_the_list_but_esc_does_not() {
+        let mut app = list_app();
+        let mut input = InputState::default();
+
+        input.handle(&mut app, code(KeyCode::Esc));
+        assert!(!app.should_quit, "Esc must not quit the list");
+
+        input.handle(&mut app, key('q'));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn z_toggles_zoom() {
+        let mut app = list_app();
+        let mut input = InputState::default();
+        assert!(!app.maximized());
+        input.handle(&mut app, key('z'));
+        assert!(app.maximized());
+        input.handle(&mut app, key('z'));
+        assert!(!app.maximized());
+    }
+
+    #[test]
+    fn jk_and_gg_g_move_the_list_selection() {
+        let mut app = list_app();
+        let mut input = InputState::default();
+
+        input.handle(&mut app, key('j'));
+        assert_eq!(app.list_selected(), 1);
+        input.handle(&mut app, key('k'));
+        assert_eq!(app.list_selected(), 0);
+
+        input.handle(&mut app, key('G'));
+        assert_eq!(app.list_selected(), 2);
+        input.handle(&mut app, key('g')); // gg chord
+        input.handle(&mut app, key('g'));
+        assert_eq!(app.list_selected(), 0);
+    }
+
+    #[test]
+    fn slash_opens_search_mode() {
+        let mut app = list_app();
+        let mut input = InputState::default();
+        input.handle(&mut app, key('/'));
+        assert_eq!(app.mode(), Mode::Search);
+    }
+
+    #[test]
+    fn paging_keys_flip_a_page_with_the_cursor_at_the_top() {
+        let mut app = conversation_app();
+        let mut input = InputState::default();
+
+        input.handle(&mut app, key('j'));
+        assert_eq!(app.conversation().unwrap().cursor(), 1);
+
+        // Ctrl-f and Space both page forward to the top of the new page.
+        for k in [ctrl('f'), key(' ')] {
+            let before = app.conversation().unwrap().offset();
+            input.handle(&mut app, k);
+            let view = app.conversation().unwrap();
+            assert!(view.offset() > before);
+            assert_eq!(view.cursor(), view.offset());
+        }
+    }
+
+    #[test]
+    fn o_and_enter_toggle_the_fold_under_the_cursor() {
+        let jsonl = concat!(
+            r#"{"type":"assistant","sessionId":"s","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+            "\n",
+            r#"{"type":"user","sessionId":"s","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"one\ntwo"}]}}"#,
+            "\n",
+        );
+        let mut app = App::with_session(claude::parse(jsonl).0);
+        app.conversation_mut().unwrap().sync_viewport(80, 20);
+        let mut input = InputState::default();
+
+        let folded = app.conversation().unwrap().total_rows();
+        input.handle(&mut app, key('j')); // move onto the tool_result header
+        input.handle(&mut app, key('o')); // expand
+        assert!(app.conversation().unwrap().total_rows() > folded);
+        input.handle(&mut app, code(KeyCode::Enter)); // Enter folds it back
+        assert_eq!(app.conversation().unwrap().total_rows(), folded);
+    }
+
+    #[test]
+    fn q_exits_a_directly_opened_session() {
+        let mut app = conversation_app(); // opened directly (with_session)
+        let mut input = InputState::default();
+        input.handle(&mut app, key('q'));
+        assert!(app.should_quit);
+    }
+}
