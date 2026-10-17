@@ -23,12 +23,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.sync_selection();
     let now = SystemTime::now();
 
+    // A line below the status bar is always reserved (tig/vim style): the
+    // search/filter state renders there, keeping it out of the status bar and
+    // keeping the body height stable whether or not a search is active.
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(frame.area());
     let body = outer[0];
     let status = outer[1];
+    let message = outer[2];
 
     let single = app.maximized() || app.entries().is_empty() || body.width < SPLIT_MIN_WIDTH;
     if single {
@@ -54,14 +62,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     draw_status(frame, app, status);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::raw(
+            search_message(app).unwrap_or_default(),
+        ))),
+        message,
+    );
 
-    // While typing a query, place the (visible) cursor at the end of the
-    // status-line prompt so IME composition appears there, not at the corner.
+    // While typing a query, place the (visible) cursor at the end of the prompt
+    // on the reserved line, so IME composition appears there, not at the corner.
     if app.mode() == Mode::Search {
         let prompt = 2; // " /"
-        let x = status.x + prompt + display_width(app.input_buffer()) as u16;
-        let x = x.min(status.x + status.width.saturating_sub(1));
-        frame.set_cursor_position((x, status.y));
+        let x = message.x + prompt + display_width(app.input_buffer()) as u16;
+        let x = x.min(message.x + message.width.saturating_sub(1));
+        frame.set_cursor_position((x, message.y));
     }
 }
 
@@ -242,35 +256,27 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn status_text(app: &App) -> (String, &'static str) {
-    if app.mode() == Mode::Search {
-        let hint = match app.focus() {
-            Focus::List => "↑↓ select  Enter open  Esc cancel ",
-            Focus::Conversation => "↑↓ next  Enter accept  Esc cancel ",
-        };
-        return (format!(" /{}", app.input_buffer()), hint);
-    }
     match app.focus() {
         Focus::List => {
             let count = app.filtered().len();
             let shown = count.min(app.list_selected() + 1);
             let agent = app.agent_filter().map(|a| a.name()).unwrap_or("All");
-            let left = if app.filter_query().is_empty() {
-                format!(" agent:{agent}  {shown}/{count}")
+            let left = format!(" agent:{agent}  {shown}/{count}");
+            let hint = if app.mode() == Mode::Search {
+                "↑↓ select  Enter open  Esc cancel "
             } else {
-                format!(
-                    " agent:{agent}  filter:{}  {shown}/{count}",
-                    app.filter_query()
-                )
+                "j/k move  a agent  / filter  Enter open  q quit "
             };
-            (left, "j/k move  a agent  / filter  Enter open  q quit ")
+            (left, hint)
         }
         Focus::Conversation => {
-            let searching = app.conversation().is_some_and(|v| v.match_info().is_some());
             let left = app
                 .conversation()
                 .map(conversation_status_left)
                 .unwrap_or_default();
-            let hint = if searching {
+            let hint = if app.mode() == Mode::Search {
+                "↑↓ next  Enter accept  Esc cancel "
+            } else if app.conversation().is_some_and(|v| v.match_info().is_some()) {
                 "n/N match  o fold  / search  q back "
             } else {
                 "j/k move  o fold  / search  Tab list  q back "
@@ -288,12 +294,30 @@ fn conversation_status_left(view: &ConversationView) -> String {
         .unwrap_or(0);
     let when = view.started_at().map(format_timestamp).unwrap_or_default();
     let sid = view.session_id().unwrap_or("(unknown)");
-    match view.match_info() {
-        Some((cur, tot)) => format!(
-            " {when}  {sid}  {pos}%  /{}  {cur}/{tot}",
-            view.search_query()
-        ),
-        None => format!(" {when}  {sid}  {pos}%"),
+    format!(" {when}  {sid}  {pos}%")
+}
+
+/// Text for the reserved line below the status bar: the live prompt while
+/// typing, else the committed search/filter result, or `None` when idle.
+fn search_message(app: &App) -> Option<String> {
+    if app.mode() == Mode::Search {
+        return Some(format!(" /{}", app.input_buffer()));
+    }
+    match app.focus() {
+        Focus::List => {
+            let q = app.filter_query();
+            (!q.is_empty()).then(|| format!(" Filter: '{q}'"))
+        }
+        Focus::Conversation => {
+            let view = app.conversation()?;
+            match view.match_info()? {
+                (_, 0) => Some(format!(" No matches for '{}'", view.search_query())),
+                (cur, tot) => Some(format!(
+                    " Match {cur} of {tot} for '{}'",
+                    view.search_query()
+                )),
+            }
+        }
     }
 }
 
