@@ -292,6 +292,15 @@ impl App {
         self.ensure_list_visible();
     }
 
+    pub fn list_half_page(&self) -> usize {
+        (self.list_height as usize / 2).max(1)
+    }
+
+    /// A full page less one row, mirroring [`ConversationView::full_page`].
+    pub fn list_full_page(&self) -> usize {
+        (self.list_height as usize).saturating_sub(1).max(1)
+    }
+
     pub fn list_down(&mut self, n: usize) {
         if self.filtered.is_empty() {
             return;

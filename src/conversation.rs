@@ -160,6 +160,12 @@ impl ConversationView {
         (self.viewport_height as usize / 2).max(1)
     }
 
+    /// A full page less one line, so a line of context carries across the jump
+    /// (vim's Ctrl-f / Ctrl-b).
+    pub fn full_page(&self) -> usize {
+        (self.viewport_height as usize).saturating_sub(1).max(1)
+    }
+
     /// Toggle the foldable item under the cursor, if any.
     pub fn toggle_fold_under_cursor(&mut self) {
         let Some(Some(id)) = self.rows.get(self.cursor).map(|r| r.fold) else {

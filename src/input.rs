@@ -61,6 +61,18 @@ impl InputState {
             KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => app.list_down(1),
             KeyCode::Char('k') | KeyCode::Up => app.list_up(1),
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.list_down(app.list_half_page())
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.list_up(app.list_half_page())
+            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.list_down(app.list_full_page())
+            }
+            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.list_up(app.list_full_page())
+            }
             KeyCode::Char('g') => {
                 if was_pending_g {
                     app.list_top();
@@ -119,6 +131,12 @@ impl InputState {
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 view.cursor_up(view.half_page())
+            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                view.cursor_down(view.full_page())
+            }
+            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                view.cursor_up(view.full_page())
             }
             KeyCode::Char('g') => {
                 if was_pending_g {
