@@ -150,7 +150,7 @@ impl InputState {
 
     fn handle_list(&mut self, app: &mut App, key: KeyEvent, was_pending_g: bool) {
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+            KeyCode::Char('q') => app.should_quit = true,
             KeyCode::Char('a') => app.cycle_agent_filter(),
             KeyCode::Char('/') => app.start_search(),
             KeyCode::Char('z') => app.toggle_maximize(),
