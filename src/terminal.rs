@@ -31,7 +31,11 @@ impl TerminalGuard {
             EnableBracketedPaste,
             DisableLineWrap
         )?;
-        let terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+        let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+        // Blank the screen up front: the first frame has no previous frame to
+        // diff against, so cells we leave blank would otherwise show pre-launch
+        // content.
+        terminal.clear()?;
         Ok(Self { terminal })
     }
 
