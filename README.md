@@ -15,10 +15,10 @@ never modifies your files and leaves nothing behind.
 Requires a Rust toolchain.
 
 ```sh
-# Build a release binary at target/release/ccs
-cargo build --release
+# Install the `ccs` command straight from GitHub
+cargo install --git https://github.com/honbin/ccscope
 
-# Or install the `ccs` command into ~/.cargo/bin
+# Or, from a local clone:
 cargo install --path .
 ```
 
