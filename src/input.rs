@@ -124,8 +124,8 @@ impl InputState {
         }
     }
 
-    /// The movement keymap, shared by both panes (see [`Scrollable`]). Returns
-    /// whether the key was a movement key; `g` arms the `gg` chord.
+    /// The movement keymap, shared by both panes (see [`Scrollable`]); `g` arms
+    /// the `gg` chord. Non-movement keys fall through untouched.
     fn handle_movement(&mut self, s: &mut dyn Scrollable, key: KeyEvent, was_pending_g: bool) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
