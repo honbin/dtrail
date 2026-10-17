@@ -294,7 +294,9 @@ fn conversation_status_left(view: &ConversationView) -> String {
         .unwrap_or(0);
     let when = view.started_at().map(format_timestamp).unwrap_or_default();
     let sid = view.session_id().unwrap_or("(unknown)");
-    format!(" {when}  {sid}  {pos}%")
+    // `when` and `sid` come straight from the session file (raw timestamp / id),
+    // so sanitize before they reach the terminal — same as body and list rows.
+    sanitize_display(&format!(" {when}  {sid}  {pos}%"))
 }
 
 /// Text for the reserved line below the status bar: the live prompt while

@@ -119,3 +119,21 @@ fn empty_list_renders_without_panicking() {
     let out = render(&mut app);
     assert!(out.contains("no sessions found"));
 }
+
+#[test]
+fn the_status_line_sanitizes_a_malicious_session_id() {
+    // A session id carrying an ANSI escape (from the file) must not reach the
+    // terminal raw via the status line.
+    let jsonl =
+        r#"{"type":"user","sessionId":"\u001b[31mBAD","message":{"role":"user","content":"hi"}}"#;
+    let mut app = App::with_session(claude::parse(jsonl).0);
+    let out = render(&mut app);
+    assert!(
+        !out.contains('\u{1b}'),
+        "escape leaked into the status line"
+    );
+    assert!(
+        out.contains("BAD"),
+        "the sanitized id text should still show"
+    );
+}
