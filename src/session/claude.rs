@@ -72,7 +72,12 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
 
     let reader = BufReader::new(fs::File::open(path).ok()?);
     let mut project: Option<String> = None;
+    // The real prompt (first non-command user text), preferred for the preview.
     let mut summary: Option<String> = None;
+    // If there is no real prompt, fall back to the first user utterance as-is —
+    // e.g. a slash-command wrapper. Still a recorded fact, just not a prompt; we
+    // never invent a summary from elsewhere.
+    let mut raw_user: Option<String> = None;
     for line in reader.lines().map_while(Result::ok) {
         let line = line.trim();
         if line.is_empty() {
@@ -88,9 +93,14 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         }
         if summary.is_none()
             && let Some(text) = user_text(&value)
-            && !is_command_or_meta(&text)
         {
-            summary = Some(text);
+            if is_command_or_meta(&text) {
+                if raw_user.is_none() && !text.trim().is_empty() {
+                    raw_user = Some(text);
+                }
+            } else {
+                summary = Some(text);
+            }
         }
         if project.is_some() && summary.is_some() {
             break;
@@ -103,11 +113,25 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         session_id,
         project: project.unwrap_or_else(|| decode_project_dir(project_dir)),
         modified,
-        summary: summary.unwrap_or_default(),
+        summary: summary.or(raw_user).unwrap_or_default(),
     })
 }
 
-/// String content of a user record (array content is not used for previews).
+/// First non-empty `text` block from a message `content` array.
+fn first_block_text(content: &Value) -> Option<String> {
+    content
+        .as_array()?
+        .iter()
+        .filter_map(|b| {
+            (b.get("type").and_then(Value::as_str) == Some("text"))
+                .then(|| b.get("text").and_then(Value::as_str))
+                .flatten()
+        })
+        .map(str::trim)
+        .find(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
 fn user_text(value: &Value) -> Option<String> {
     if value.get("type").and_then(Value::as_str) != Some("user") {
         return None;
@@ -115,11 +139,13 @@ fn user_text(value: &Value) -> Option<String> {
     if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
         return None;
     }
-    value
-        .get("message")?
-        .get("content")?
-        .as_str()
-        .map(str::to_string)
+    // Content is a plain string or an array of blocks; a user message of only
+    // tool_results has no prompt text and yields None.
+    let content = value.get("message")?.get("content")?;
+    match content.as_str() {
+        Some(s) => Some(s.to_string()),
+        None => first_block_text(content),
+    }
 }
 
 /// Fallback when `cwd` is absent: undo the dir-name encoding (`-` back to `/`).
@@ -325,5 +351,101 @@ mod tests {
         assert_eq!(e.session_id, "sess-1");
         assert_eq!(e.project, "/Users/me/projects/demo");
         assert_eq!(e.summary, "本当の最初の質問");
+    }
+
+    #[test]
+    fn summary_falls_back_to_the_raw_user_utterance() {
+        let tmp = std::env::temp_dir().join(format!("ccscope-claude-fb-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("sess-x.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"user","cwd":"/p","message":{"role":"user","content":"<command-name>/clear</command-name>"}}"#,
+                "\n",
+                r#"{"type":"assistant","message":{"content":[{"type":"text","text":"here is the answer"}]}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let e = scan(&path).unwrap();
+        fs::remove_dir_all(&tmp).ok();
+
+        // No real prompt, so the preview shows the raw first user utterance (the
+        // command) as a recorded fact — not the assistant's reply.
+        assert_eq!(e.summary, "<command-name>/clear</command-name>");
+    }
+
+    #[test]
+    fn a_session_with_no_user_message_has_an_empty_preview() {
+        let tmp = std::env::temp_dir().join(format!("ccscope-claude-empty-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("sess-x.jsonl");
+        fs::write(
+            &path,
+            // Only an assistant turn; nothing is invented from it.
+            concat!(
+                r#"{"type":"assistant","cwd":"/p","message":{"content":[{"type":"text","text":"unprompted"}]}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let e = scan(&path).unwrap();
+        fs::remove_dir_all(&tmp).ok();
+
+        assert_eq!(e.summary, "");
+    }
+
+    #[test]
+    fn summary_reads_an_array_content_user_message() {
+        let tmp = std::env::temp_dir().join(format!("ccscope-claude-arr-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("sess-x.jsonl");
+        fs::write(
+            &path,
+            // A user message whose content is an array of blocks, not a string.
+            concat!(
+                r#"{"type":"user","cwd":"/p","message":{"role":"user","content":[{"type":"text","text":"array prompt"}]}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let e = scan(&path).unwrap();
+        fs::remove_dir_all(&tmp).ok();
+
+        assert_eq!(e.summary, "array prompt");
+    }
+
+    #[test]
+    fn summary_skips_a_meta_opener_then_reads_the_array_prompt() {
+        // Mirrors a real envelope: meta records, a command-only string user
+        // message, then the real prompt as an array-content user message.
+        let tmp = std::env::temp_dir().join(format!("ccscope-claude-env-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("sess-x.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"mode"}"#,
+                "\n",
+                r#"{"type":"file-history-snapshot"}"#,
+                "\n",
+                r#"{"type":"user","cwd":"/p","message":{"role":"user","content":"<command-name>/clear</command-name>"}}"#,
+                "\n",
+                r#"{"type":"user","cwd":"/p","message":{"role":"user","content":[{"type":"text","text":"the real prompt"}]}}"#,
+                "\n",
+                r#"{"type":"attachment"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let e = scan(&path).unwrap();
+        fs::remove_dir_all(&tmp).ok();
+
+        assert_eq!(e.summary, "the real prompt");
     }
 }

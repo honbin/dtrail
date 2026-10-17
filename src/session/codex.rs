@@ -50,6 +50,9 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
     let mut project: Option<String> = None;
     let mut summary: Option<String> = None;
     let mut session_id: Option<String> = None;
+    // If there is no real prompt, fall back to the first user utterance as-is
+    // (e.g. a slash-command wrapper) — a recorded fact, not an invented summary.
+    let mut raw_user: Option<String> = None;
 
     for line in reader.lines().map_while(Result::ok) {
         let line = line.trim();
@@ -77,12 +80,16 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
             }
             Some("response_item") if summary.is_none() => {
                 let payload = value.get("payload");
-                let is_user_message = payload.and_then(|p| p.get("type")).and_then(Value::as_str)
-                    == Some("message")
-                    && payload.and_then(|p| p.get("role")).and_then(Value::as_str) == Some("user");
-                if is_user_message {
+                let is_message =
+                    payload.and_then(|p| p.get("type")).and_then(Value::as_str) == Some("message");
+                let role = payload.and_then(|p| p.get("role")).and_then(Value::as_str);
+                if is_message && role == Some("user") {
                     let text = message_text(payload.unwrap());
-                    if !is_command_or_meta(&text) {
+                    if is_command_or_meta(&text) {
+                        if raw_user.is_none() && !text.trim().is_empty() {
+                            raw_user = Some(text);
+                        }
+                    } else {
                         summary = Some(text);
                     }
                 }
@@ -107,7 +114,7 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
         session_id,
         project: project.unwrap_or_default(),
         modified,
-        summary: summary.unwrap_or_default(),
+        summary: summary.or(raw_user).unwrap_or_default(),
     })
 }
 
@@ -333,5 +340,31 @@ mod tests {
         assert_eq!(e.project, "/Users/me/proj");
         assert_eq!(e.summary, "fix the bug");
         assert_eq!(e.session_id, "sid-1");
+    }
+
+    #[test]
+    fn summary_falls_back_to_the_raw_user_utterance() {
+        let tmp = std::env::temp_dir().join(format!("ccscope-codex-fb-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("rollout.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"cwd":"/p","session_id":"sid"}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<command-name>/clear</command-name>"}]}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"the answer"}]}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let e = scan(&path).unwrap();
+        fs::remove_dir_all(&tmp).ok();
+
+        // No real prompt → the raw first user utterance (the command), not the
+        // assistant's reply.
+        assert_eq!(e.summary, "<command-name>/clear</command-name>");
     }
 }

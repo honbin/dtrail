@@ -144,11 +144,18 @@ fn agent_of_file(path: &Path) -> Option<Agent> {
     None
 }
 
-/// Slash commands and wrappers (`<command-name>…`, `[Request interrupted…]`)
-/// are useless as a preview, so skip them. Shared by the agents' discovery.
+/// Injected wrappers that aren't a real prompt: the slash-command family
+/// (`<command-name>`, `<command-message>`, `<command-args>`), local command
+/// output (`<local-command-stdout>`, `<local-command-stderr>`), and interrupt
+/// markers. Matched by their specific tag prefixes, not a bare `<`, so a genuine
+/// prompt that happens to start with `<` (e.g. "<div> isn't working") is not
+/// mistaken for metadata.
 pub(crate) fn is_command_or_meta(text: &str) -> bool {
     let t = text.trim_start();
-    t.is_empty() || t.starts_with('<') || t.starts_with("[Request interrupted")
+    t.is_empty()
+        || t.starts_with("<command-")
+        || t.starts_with("<local-command-")
+        || t.starts_with("[Request interrupted")
 }
 
 #[cfg(test)]
@@ -158,9 +165,17 @@ mod tests {
     #[test]
     fn command_wrappers_are_skipped_as_preview() {
         assert!(is_command_or_meta("<command-name>/clear</command-name>"));
+        assert!(is_command_or_meta(
+            "<command-message>run the thing</command-message>"
+        ));
+        assert!(is_command_or_meta(
+            "<local-command-stdout>output</local-command-stdout>"
+        ));
         assert!(is_command_or_meta("[Request interrupted by user]"));
         assert!(is_command_or_meta("   "));
         assert!(!is_command_or_meta("最適化できますか？"));
+        // A real prompt that merely starts with `<` must not be treated as meta.
+        assert!(!is_command_or_meta("<div> isn't working"));
     }
 
     #[test]
