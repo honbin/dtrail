@@ -97,7 +97,7 @@ focused pane is shown.
 
 - Reads the local session JSONL files only; opens no network connections.
 - Treats session files as read-only; never writes to them.
-- Creates no database, cache, or search index, and writes no logs.
+- Creates no on-disk database, cache, search index, or log files.
 
 ## Development
 
