@@ -90,8 +90,8 @@ Opening a session from a filtered list carries the query into the conversation
 as a body search, jumping to the first occurrence so `n`/`N` step through it.
 Search covers the whole session — messages, tool input/output, and thinking —
 and a hit inside a folded item reveals just that item. The conversation's
-status line shows the session's start time (as recorded, UTC). An active
-search or filter shows on its own line below it.
+status line shows the session's start time (as recorded, UTC). An active search
+or filter shows on its own line below it.
 
 While editing a query, `Up`/`Down` (or `Ctrl-p`/`Ctrl-n`) move the selection
 (list) or jump between matches (conversation), `Esc` cancels, and `Enter`

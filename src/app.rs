@@ -149,31 +149,43 @@ impl App {
                 .map(|v| v.search_query().to_string())
                 .unwrap_or_default(),
         };
-        if self.focus == Focus::Conversation
-            && let Some(view) = self.conversation.as_mut()
-        {
-            view.begin_search();
+        // The list narrows live as you type; the conversation search is deferred
+        // to Enter (search_confirm) so the body doesn't scroll and folds don't
+        // pop open mid-search — here we only note where to return on cancel.
+        match self.focus {
+            Focus::List => self.apply_filter(),
+            Focus::Conversation => {
+                if let Some(view) = self.conversation.as_mut() {
+                    view.begin_search();
+                }
+            }
         }
-        self.apply_query();
     }
 
     pub fn search_push(&mut self, c: char) {
         self.input_buffer.push(c);
-        self.apply_query();
+        if self.focus == Focus::List {
+            self.apply_filter();
+        }
     }
 
     pub fn search_backspace(&mut self) {
         self.input_buffer.pop();
-        self.apply_query();
+        if self.focus == Focus::List {
+            self.apply_filter();
+        }
     }
 
-    /// Accept the query, keeping the current match position.
+    /// Confirm the search. The conversation's search is applied here: reveal
+    /// folds that contain a match and jump to the first.
     pub fn search_confirm(&mut self) {
         self.mode = Mode::Normal;
-        if self.focus == Focus::Conversation
-            && let Some(view) = self.conversation.as_mut()
-        {
-            view.accept_search();
+        if self.focus == Focus::Conversation {
+            let query = self.input_buffer.clone();
+            if let Some(view) = self.conversation.as_mut() {
+                view.set_search(&query);
+                view.accept_search();
+            }
         }
     }
 
@@ -194,24 +206,12 @@ impl App {
         }
     }
 
-    /// Push the edited query into the focused pane's search/filter.
-    fn apply_query(&mut self) {
-        match self.focus {
-            Focus::List => {
-                self.filter_query = self.input_buffer.clone();
-                self.recompute_filter();
-            }
-            Focus::Conversation => {
-                if let Some(view) = self.conversation.as_mut() {
-                    view.set_search(&self.input_buffer);
-                }
-            }
-        }
+    fn apply_filter(&mut self) {
+        self.filter_query = self.input_buffer.clone();
+        self.recompute_filter();
     }
 
-    /// Go to the next search result: the next matching row in the list, or the
-    /// next match in the conversation. Works both while editing a query and
-    /// (for the conversation) after it is confirmed.
+    /// Next result: down one row in the list, or the next match in the conversation.
     pub fn search_next(&mut self) {
         match self.focus {
             Focus::List => self.list_down(1),

@@ -216,6 +216,42 @@ fn conversation_search_is_retained_after_confirm_and_prefilled_next_time() {
 }
 
 #[test]
+fn conversation_search_does_not_move_until_confirmed() {
+    // The only match sits well below the first screen.
+    let lines: Vec<String> = (0..40)
+        .map(|i| {
+            if i == 30 {
+                "needle".into()
+            } else {
+                format!("line{i}")
+            }
+        })
+        .collect();
+    let content = lines.join("\\n");
+    let jsonl = format!(
+        r#"{{"type":"user","sessionId":"s","message":{{"role":"user","content":"{content}"}}}}"#
+    );
+    let mut app = App::with_session(claude::parse(&jsonl).0);
+    app.conversation_mut().unwrap().sync_viewport(80, 10);
+    let start = app.conversation().unwrap().cursor();
+
+    // Typing the query must not scroll the body or jump the cursor.
+    app.start_search();
+    for c in "needle".chars() {
+        app.search_push(c);
+    }
+    assert_eq!(app.conversation().unwrap().cursor(), start);
+    assert_eq!(app.conversation().unwrap().offset(), 0);
+    assert_eq!(app.conversation().unwrap().match_info(), None);
+
+    // Enter applies the search: jump to the match and report it.
+    app.search_confirm();
+    let view = app.conversation().unwrap();
+    assert!(view.cursor() > start);
+    assert_eq!(view.match_info(), Some((1, 1)));
+}
+
+#[test]
 fn list_filter_narrows_by_project_or_summary() {
     let mut app = App::with_entries(vec![
         entry("/home/me/widget", "add preview"),
