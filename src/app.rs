@@ -6,6 +6,7 @@
 //! fold, search) lives in [`ConversationView`].
 
 use crate::conversation::ConversationView;
+use crate::scroll::Scroll;
 use crate::session::{Agent, Session, SessionEntry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,9 +29,8 @@ pub struct App {
     filter_query: String,
     /// Show only this agent's sessions; `None` means all agents.
     agent_filter: Option<Agent>,
-    list_selected: usize,
-    list_offset: usize,
-    list_height: u16,
+    /// Selection and scroll offset over `filtered`.
+    list: Scroll,
     conversation: Option<ConversationView>,
     /// `entries` index currently loaded into `conversation`, to avoid reparsing.
     loaded_index: Option<usize>,
@@ -54,9 +54,7 @@ impl App {
             filtered,
             filter_query: String::new(),
             agent_filter: None,
-            list_selected: 0,
-            list_offset: 0,
-            list_height: 0,
+            list: Scroll::default(),
             conversation: None,
             loaded_index: None,
             direct: false,
@@ -75,9 +73,7 @@ impl App {
             filtered: Vec::new(),
             filter_query: String::new(),
             agent_filter: None,
-            list_selected: 0,
-            list_offset: 0,
-            list_height: 0,
+            list: Scroll::default(),
             conversation: Some(ConversationView::new(session)),
             loaded_index: None,
             direct: true,
@@ -280,53 +276,54 @@ impl App {
     }
 
     pub fn list_selected(&self) -> usize {
-        self.list_selected
+        self.list.cursor()
     }
 
     pub fn list_offset(&self) -> usize {
-        self.list_offset
+        self.list.offset()
     }
 
     pub fn sync_list_viewport(&mut self, height: u16) {
-        self.list_height = height;
-        self.ensure_list_visible();
+        self.list.resize(height, self.filtered.len());
     }
 
-    pub fn list_half_page(&self) -> usize {
-        (self.list_height as usize / 2).max(1)
+    pub fn list_page_down(&mut self) {
+        self.list.page(true, self.filtered.len());
     }
 
-    /// A full page less one row, mirroring [`ConversationView::full_page`].
-    pub fn list_full_page(&self) -> usize {
-        (self.list_height as usize).saturating_sub(1).max(1)
+    pub fn list_page_up(&mut self) {
+        self.list.page(false, self.filtered.len());
+    }
+
+    pub fn list_half_page_down(&mut self) {
+        self.list
+            .scroll_by(self.list.half_page() as isize, self.filtered.len());
+    }
+
+    pub fn list_half_page_up(&mut self) {
+        self.list
+            .scroll_by(-(self.list.half_page() as isize), self.filtered.len());
     }
 
     pub fn list_down(&mut self, n: usize) {
-        if self.filtered.is_empty() {
-            return;
-        }
-        self.list_selected = (self.list_selected + n).min(self.filtered.len() - 1);
-        self.ensure_list_visible();
+        self.list.move_by(n as isize, self.filtered.len(), 0);
     }
 
     pub fn list_up(&mut self, n: usize) {
-        self.list_selected = self.list_selected.saturating_sub(n);
-        self.ensure_list_visible();
+        self.list.move_by(-(n as isize), self.filtered.len(), 0);
     }
 
     pub fn list_top(&mut self) {
-        self.list_selected = 0;
-        self.ensure_list_visible();
+        self.list.to_top(self.filtered.len());
     }
 
     pub fn list_bottom(&mut self) {
-        self.list_selected = self.filtered.len().saturating_sub(1);
-        self.ensure_list_visible();
+        self.list.to_bottom(self.filtered.len());
     }
 
     /// Entry index the list cursor currently points at.
     fn selected_entry_index(&self) -> Option<usize> {
-        self.filtered.get(self.list_selected).copied()
+        self.filtered.get(self.list.cursor()).copied()
     }
 
     /// Load the selected session into the conversation pane if the selection
@@ -359,29 +356,11 @@ impl App {
             })
             .map(|(i, _)| i)
             .collect();
+        // Narrowing lands on the first match (so Enter opens it); otherwise keep
+        // the current selection, clamped into range. Reset the scroll to the top.
         let narrowed = !q.is_empty() || agent.is_some();
-        if narrowed {
-            // Narrowing: land on the first match so Enter opens it.
-            self.list_selected = 0;
-        } else if self.list_selected >= self.filtered.len() {
-            // No filter: just keep the selection in range.
-            self.list_selected = self.filtered.len().saturating_sub(1);
-        }
-        self.list_offset = 0;
-        self.ensure_list_visible();
-    }
-
-    /// Keep the selected row within the viewport by adjusting list scroll.
-    fn ensure_list_visible(&mut self) {
-        let h = self.list_height as usize;
-        if h == 0 {
-            return;
-        }
-        if self.list_selected < self.list_offset {
-            self.list_offset = self.list_selected;
-        } else if self.list_selected >= self.list_offset + h {
-            self.list_offset = self.list_selected + 1 - h;
-        }
+        let cursor = if narrowed { 0 } else { self.list.cursor() };
+        self.list.restore(cursor, 0, self.filtered.len());
     }
 
     pub fn conversation(&self) -> Option<&ConversationView> {

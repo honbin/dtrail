@@ -7,6 +7,7 @@ pub mod app;
 pub mod conversation;
 pub mod datefmt;
 pub mod input;
+pub mod scroll;
 pub mod session;
 pub mod terminal;
 pub mod text;

@@ -62,17 +62,18 @@ impl InputState {
             KeyCode::Char('j') | KeyCode::Down => app.list_down(1),
             KeyCode::Char('k') | KeyCode::Up => app.list_up(1),
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.list_down(app.list_half_page())
+                app.list_half_page_down()
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.list_up(app.list_half_page())
+                app.list_half_page_up()
             }
             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.list_down(app.list_full_page())
+                app.list_page_down()
             }
             KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.list_up(app.list_full_page())
+                app.list_page_up()
             }
+            KeyCode::Char(' ') => app.list_page_down(),
             KeyCode::Char('g') => {
                 if was_pending_g {
                     app.list_top();
@@ -127,17 +128,13 @@ impl InputState {
             KeyCode::Char('j') | KeyCode::Down => view.cursor_down(1),
             KeyCode::Char('k') | KeyCode::Up => view.cursor_up(1),
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                view.cursor_down(view.half_page())
+                view.half_page_down()
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                view.cursor_up(view.half_page())
+                view.half_page_up()
             }
-            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                view.cursor_down(view.full_page())
-            }
-            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                view.cursor_up(view.full_page())
-            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => view.page_down(),
+            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => view.page_up(),
             KeyCode::Char('g') => {
                 if was_pending_g {
                     view.cursor_top();
@@ -146,9 +143,8 @@ impl InputState {
                 }
             }
             KeyCode::Char('G') => view.cursor_bottom(),
-            KeyCode::Char('o') | KeyCode::Char(' ') | KeyCode::Enter => {
-                view.toggle_fold_under_cursor()
-            }
+            KeyCode::Char(' ') => view.page_down(),
+            KeyCode::Char('o') | KeyCode::Enter => view.toggle_fold_under_cursor(),
             _ => {}
         }
     }

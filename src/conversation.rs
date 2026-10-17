@@ -4,8 +4,13 @@
 
 use std::collections::HashSet;
 
+use crate::scroll::Scroll;
 use crate::session::Session;
 use crate::view::{self, Fold, Row, build_rows};
+
+/// Rows of context kept above and below a search match so it never lands on an
+/// edge. Plain cursor movement uses no scrolloff (the cursor reaches the edges).
+const SEARCH_SCROLLOFF: usize = 3;
 
 pub struct ConversationView {
     session: Session,
@@ -14,16 +19,14 @@ pub struct ConversationView {
     fold_texts: Vec<String>,
     /// Fold ids currently expanded; empty means everything is folded.
     expanded: HashSet<usize>,
-    offset: usize,
-    /// Highlighted row (the line cursor).
-    cursor: usize,
+    /// Line cursor and scroll offset over `rows`.
+    scroll: Scroll,
     rows: Vec<Row>,
     rows_width: u16,
     /// The effective fold set `rows` were last built from. Rows depend only on
     /// (session, this set, width), so a rebuild with all three unchanged is a
     /// no-op and can skip the flatten+wrap.
     last_effective: HashSet<usize>,
-    viewport_height: u16,
     search_query: String,
     matches: Vec<usize>,
     match_cursor: usize,
@@ -42,12 +45,10 @@ impl ConversationView {
             session,
             fold_texts,
             expanded: HashSet::new(),
-            offset: 0,
-            cursor: 0,
+            scroll: Scroll::default(),
             rows: Vec::new(),
             rows_width: 0,
             last_effective: HashSet::new(),
-            viewport_height: 0,
             search_query: String::new(),
             matches: Vec::new(),
             match_cursor: 0,
@@ -66,7 +67,7 @@ impl ConversationView {
     }
 
     pub fn sync_viewport(&mut self, width: u16, height: u16) {
-        self.viewport_height = height;
+        self.scroll.set_height(height);
         if width != self.rows_width || self.rows.is_empty() {
             self.rebuild(width);
         }
@@ -74,8 +75,7 @@ impl ConversationView {
         if let Some(query) = self.carried_search.take() {
             self.set_search(&query);
         }
-        self.clamp_cursor();
-        self.ensure_cursor_visible();
+        self.scroll.reclamp(self.rows.len());
     }
 
     /// Queue a query (from the list filter) to jump to on the next layout.
@@ -114,17 +114,17 @@ impl ConversationView {
     }
 
     pub fn visible_rows(&self) -> &[Row] {
-        let start = self.offset.min(self.rows.len());
-        let end = (self.offset + self.viewport_height as usize).min(self.rows.len());
+        let start = self.scroll.offset().min(self.rows.len());
+        let end = (self.scroll.offset() + self.scroll.height() as usize).min(self.rows.len());
         &self.rows[start..end]
     }
 
     pub fn offset(&self) -> usize {
-        self.offset
+        self.scroll.offset()
     }
 
     pub fn cursor(&self) -> usize {
-        self.cursor
+        self.scroll.cursor()
     }
 
     pub fn total_rows(&self) -> usize {
@@ -132,43 +132,46 @@ impl ConversationView {
     }
 
     pub fn viewport_height(&self) -> u16 {
-        self.viewport_height
+        self.scroll.height()
     }
 
     pub fn cursor_down(&mut self, n: usize) {
-        self.cursor = self.cursor.saturating_add(n);
-        self.clamp_cursor();
-        self.ensure_cursor_visible();
+        self.scroll.move_by(n as isize, self.rows.len(), 0);
     }
 
     pub fn cursor_up(&mut self, n: usize) {
-        self.cursor = self.cursor.saturating_sub(n);
-        self.ensure_cursor_visible();
+        self.scroll.move_by(-(n as isize), self.rows.len(), 0);
     }
 
     pub fn cursor_top(&mut self) {
-        self.cursor = 0;
-        self.ensure_cursor_visible();
+        self.scroll.to_top(self.rows.len());
     }
 
     pub fn cursor_bottom(&mut self) {
-        self.cursor = self.rows.len().saturating_sub(1);
-        self.ensure_cursor_visible();
+        self.scroll.to_bottom(self.rows.len());
     }
 
-    pub fn half_page(&self) -> usize {
-        (self.viewport_height as usize / 2).max(1)
+    pub fn half_page_down(&mut self) {
+        self.scroll
+            .scroll_by(self.scroll.half_page() as isize, self.rows.len());
     }
 
-    /// A full page less one line, so a line of context carries across the jump
-    /// (vim's Ctrl-f / Ctrl-b).
-    pub fn full_page(&self) -> usize {
-        (self.viewport_height as usize).saturating_sub(1).max(1)
+    pub fn half_page_up(&mut self) {
+        self.scroll
+            .scroll_by(-(self.scroll.half_page() as isize), self.rows.len());
+    }
+
+    pub fn page_down(&mut self) {
+        self.scroll.page(true, self.rows.len());
+    }
+
+    pub fn page_up(&mut self) {
+        self.scroll.page(false, self.rows.len());
     }
 
     /// Toggle the foldable item under the cursor, if any.
     pub fn toggle_fold_under_cursor(&mut self) {
-        let Some(Some(id)) = self.rows.get(self.cursor).map(|r| r.fold) else {
+        let Some(Some(id)) = self.rows.get(self.scroll.cursor()).map(|r| r.fold) else {
             return;
         };
         if !self.expanded.remove(&id) {
@@ -176,11 +179,10 @@ impl ConversationView {
         }
         self.rebuild(self.rows_width.max(1));
         // Keep the cursor on the item's header row after the rebuild.
-        if let Some(pos) = self.rows.iter().position(|r| r.fold == Some(id)) {
-            self.cursor = pos;
+        match self.rows.iter().position(|r| r.fold == Some(id)) {
+            Some(pos) => self.scroll.jump_to(pos, self.rows.len(), 0),
+            None => self.scroll.reclamp(self.rows.len()),
         }
-        self.clamp_cursor();
-        self.ensure_cursor_visible();
     }
 
     pub fn search_query(&self) -> &str {
@@ -204,7 +206,7 @@ impl ConversationView {
 
     /// Begin an incremental search, remembering where to return on cancel.
     pub fn begin_search(&mut self) {
-        self.search_origin = Some((self.cursor, self.offset));
+        self.search_origin = Some(self.scroll.snapshot());
     }
 
     /// Keep the match position and end the incremental session (Enter).
@@ -217,12 +219,10 @@ impl ConversationView {
         let origin = self.search_origin.take();
         self.search_query.clear();
         self.rebuild(self.rows_width.max(1));
-        if let Some((cursor, offset)) = origin {
-            self.cursor = cursor;
-            self.offset = offset;
+        match origin {
+            Some((cursor, offset)) => self.scroll.restore(cursor, offset, self.rows.len()),
+            None => self.scroll.reclamp(self.rows.len()),
         }
-        self.clamp_cursor();
-        self.ensure_cursor_visible();
     }
 
     /// Update the live query, anchoring the jump at the search origin so the
@@ -232,14 +232,14 @@ impl ConversationView {
         // Rebuild so matches inside folded items are revealed and indexed.
         self.rebuild(self.rows_width.max(1));
 
-        let anchor = self.search_origin.map(|(c, _)| c).unwrap_or(self.cursor);
+        let anchor = self
+            .search_origin
+            .map(|(c, _)| c)
+            .unwrap_or(self.scroll.cursor());
         if self.search_query.is_empty() {
             // Deleting the whole query returns to the starting position.
             if let Some((c, o)) = self.search_origin {
-                self.cursor = c;
-                self.offset = o;
-                self.clamp_cursor();
-                self.ensure_cursor_visible();
+                self.scroll.restore(c, o, self.rows.len());
             }
             return;
         }
@@ -281,36 +281,7 @@ impl ConversationView {
 
     fn move_cursor_to_match(&mut self) {
         if let Some(&row) = self.matches.get(self.match_cursor) {
-            self.cursor = row;
-            self.clamp_cursor();
-            self.ensure_cursor_visible();
-        }
-    }
-
-    fn clamp_cursor(&mut self) {
-        let max = self.rows.len().saturating_sub(1);
-        if self.cursor > max {
-            self.cursor = max;
-        }
-    }
-
-    /// Scroll so the cursor stays within the viewport, keeping a few rows of
-    /// context above and below (scrolloff) so a match is never glued to the
-    /// top edge or the status bar at the bottom.
-    fn ensure_cursor_visible(&mut self) {
-        let h = self.viewport_height as usize;
-        if h == 0 {
-            return;
-        }
-        let margin = (h.saturating_sub(1) / 2).min(3);
-        if self.cursor < self.offset + margin {
-            self.offset = self.cursor.saturating_sub(margin);
-        } else if self.cursor + margin >= self.offset + h {
-            self.offset = (self.cursor + margin + 1).saturating_sub(h);
-        }
-        let max_offset = self.rows.len().saturating_sub(h);
-        if self.offset > max_offset {
-            self.offset = max_offset;
+            self.scroll.jump_to(row, self.rows.len(), SEARCH_SCROLLOFF);
         }
     }
 }

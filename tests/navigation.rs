@@ -1,4 +1,7 @@
-//! Navigation: full-page paging (Ctrl-f / Ctrl-b) in both panes.
+//! Navigation wiring: paging and half-page scroll in both panes. The scroll
+//! maths themselves are unit-tested in `src/scroll.rs`; these check the panes
+//! drive a `Scroll` correctly. Viewport height is 10, so a full page is 9 rows
+//! and a half page is 5.
 
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -21,24 +24,63 @@ fn long_conversation(height: u16) -> ConversationView {
 }
 
 #[test]
-fn full_page_moves_about_a_screen_and_back() {
+fn page_down_advances_a_page_with_cursor_at_the_top() {
     let mut view = long_conversation(10);
-    assert_eq!(view.cursor(), 0);
+    assert_eq!((view.offset(), view.cursor()), (0, 0));
 
-    let page = view.full_page();
-    assert_eq!(page, 9); // viewport 10, one line of overlap
+    view.page_down();
+    assert_eq!(view.offset(), 9); // advanced a full page
+    assert_eq!(view.cursor(), view.offset()); // cursor at the top of it
 
-    view.cursor_down(page);
-    assert_eq!(view.cursor(), page);
-
-    view.cursor_up(page);
-    assert_eq!(view.cursor(), 0);
+    view.page_up();
+    assert_eq!((view.offset(), view.cursor()), (0, 0));
 }
 
 #[test]
-fn full_page_steps_further_than_half_page() {
-    let view = long_conversation(10);
-    assert!(view.full_page() > view.half_page());
+fn a_page_jump_survives_a_plain_redraw() {
+    let mut view = long_conversation(10);
+    view.page_down();
+    let (off, cur) = (view.offset(), view.cursor());
+
+    // A redraw at the same size must not reposition the cursor.
+    view.sync_viewport(80, 10);
+    assert_eq!((view.offset(), view.cursor()), (off, cur));
+}
+
+#[test]
+fn moving_down_after_a_page_jump_does_not_snap() {
+    let mut view = long_conversation(10);
+    view.page_down();
+    let off = view.offset();
+
+    // One line down moves the cursor by one without the view jumping.
+    view.cursor_down(1);
+    assert_eq!(view.offset(), off);
+    assert_eq!(view.cursor(), off + 1);
+}
+
+#[test]
+fn half_page_scroll_keeps_the_cursor_off_the_bottom() {
+    let mut view = long_conversation(10);
+    view.cursor_down(5); // cursor to the middle of the screen
+    let screen_row = view.cursor() - view.offset();
+
+    // A half page scrolls view and cursor together, so the cursor keeps its
+    // screen row rather than drifting down to the bottom edge.
+    view.half_page_down();
+    assert_eq!(view.cursor() - view.offset(), screen_row);
+}
+
+#[test]
+fn a_resize_still_pulls_the_cursor_back_into_view() {
+    let mut view = long_conversation(20);
+    view.cursor_bottom();
+    let cur = view.cursor();
+
+    view.sync_viewport(80, 5);
+    assert_eq!(view.cursor(), cur);
+    assert!(view.cursor() >= view.offset());
+    assert!(view.cursor() < view.offset() + 5);
 }
 
 fn app_with_entries(n: usize) -> App {
@@ -56,17 +98,15 @@ fn app_with_entries(n: usize) -> App {
 }
 
 #[test]
-fn list_full_page_pages_the_selection_and_back() {
+fn list_page_down_advances_a_page_and_selects_the_top() {
     let mut app = app_with_entries(60);
     app.sync_list_viewport(10);
-    assert_eq!(app.list_selected(), 0);
 
-    let page = app.list_full_page();
-    assert_eq!(page, 9);
+    app.list_page_down();
+    assert_eq!(app.list_offset(), 9);
+    assert_eq!(app.list_selected(), app.list_offset());
 
-    app.list_down(page);
-    assert_eq!(app.list_selected(), page);
-
-    app.list_up(page);
+    app.list_page_up();
+    assert_eq!(app.list_offset(), 0);
     assert_eq!(app.list_selected(), 0);
 }

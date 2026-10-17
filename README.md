@@ -61,10 +61,11 @@ full-width. `O` overrides the layout manually, independent of diving.
 | `j` / `k` | Move down / up (the preview follows) |
 | `Ctrl-d` / `Ctrl-u` | Half page down / up |
 | `Ctrl-f` / `Ctrl-b` | Full page down / up |
+| `Space` | Page down |
 | `gg` / `G` | Jump to first / last |
 | `a` | Cycle the agent filter: all → Claude → Codex |
 | `/` | Filter by project or preview text |
-| `Enter` / `l` | Dive into the session and read it full-width |
+| `Enter` / `l` / `Tab` | Dive into the session and read it full-width |
 | `O` | Toggle full-width / split |
 | `q` | Quit |
 
@@ -75,8 +76,9 @@ full-width. `O` overrides the layout manually, independent of diving.
 | `j` / `k` | Move the line cursor down / up |
 | `Ctrl-d` / `Ctrl-u` | Half page down / up |
 | `Ctrl-f` / `Ctrl-b` | Full page down / up |
+| `Space` | Page down |
 | `gg` / `G` | Jump to top / bottom |
-| `o` / `Space` / `Enter` | Fold / unfold the item under the cursor (`▸`/`▾`) |
+| `o` / `Enter` | Fold / unfold the item under the cursor (`▸`/`▾`) |
 | `/` | Search within the session |
 | `n` / `N` | Next / previous match |
 | `O` | Toggle full-width / split |
