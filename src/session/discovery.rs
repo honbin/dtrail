@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn discover_dir_finds_both_agents_recursively() {
-        let tmp = std::env::temp_dir().join(format!("ccscope-dir-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dtrail-dir-{}", std::process::id()));
         let sub = tmp.join("nested");
         fs::create_dir_all(&sub).unwrap();
         fs::write(

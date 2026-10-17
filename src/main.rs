@@ -8,11 +8,11 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event};
 
-use ccscope::app::App;
-use ccscope::input::InputState;
-use ccscope::session::{discover, discovery};
-use ccscope::terminal::TerminalGuard;
-use ccscope::ui;
+use dtrail::app::App;
+use dtrail::input::InputState;
+use dtrail::session::{discover, discovery};
+use dtrail::terminal::TerminalGuard;
+use dtrail::ui;
 
 fn main() -> ExitCode {
     let app = match std::env::args().nth(1) {

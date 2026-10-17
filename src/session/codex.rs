@@ -319,13 +319,13 @@ mod tests {
 
     #[test]
     fn discover_in_missing_directory_is_empty() {
-        let missing = std::env::temp_dir().join("ccscope-codex-not-here-54321");
+        let missing = std::env::temp_dir().join("dtrail-codex-not-here-54321");
         assert!(discover_in(&missing).is_empty());
     }
 
     #[test]
     fn discover_in_walks_nested_dirs_and_tags_agent() {
-        let tmp = std::env::temp_dir().join(format!("ccscope-codex-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dtrail-codex-{}", std::process::id()));
         let day = tmp.join("2026").join("10").join("02");
         fs::create_dir_all(&day).unwrap();
         let path = day.join("rollout-2026-10-02T16-30-56-sid-1.jsonl");
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn summary_falls_back_to_the_raw_user_utterance() {
-        let tmp = std::env::temp_dir().join(format!("ccscope-codex-fb-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dtrail-codex-fb-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("rollout.jsonl");
         fs::write(

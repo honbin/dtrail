@@ -1,8 +1,8 @@
-# ccscope
+# dtrail
 
-A local TUI for browsing Claude Code and Codex session histories in one place.
+A local TUI to retrace your Claude Code and Codex sessions.
 
-ccscope reads your local Claude Code and Codex session files and lets you
+dtrail reads your local Claude Code and Codex session files and lets you
 re-read past work from the terminal — the conversation plus tool calls and
 their results, in chronological order, with Vim-like keyboard navigation. The
 layout is tig-like: a session list on the left (each row tagged `Claude` or
@@ -15,8 +15,8 @@ never modifies your files and leaves nothing behind.
 Requires a Rust toolchain.
 
 ```sh
-# Install the `ccs` command straight from GitHub
-cargo install --git https://github.com/honbin/ccscope
+# Install the `dtrail` command straight from GitHub
+cargo install --git https://github.com/honbin/dtrail
 
 # Or, from a local clone:
 cargo install --path .
@@ -24,17 +24,17 @@ cargo install --path .
 
 ## Usage
 
-The installed command is `ccs`.
+The installed command is `dtrail`.
 
 ```sh
 # Browse all local sessions, newest first
-ccs
+dtrail
 
 # Browse every session under a directory (recursively)
-ccs path/to/dir
+dtrail path/to/dir
 
 # Open a single session file directly
-ccs path/to/session.jsonl
+dtrail path/to/session.jsonl
 ```
 
 With no argument, sessions are discovered from both agents and merged, newest

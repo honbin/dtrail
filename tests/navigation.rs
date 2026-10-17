@@ -6,10 +6,10 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use ccscope::app::App;
-use ccscope::conversation::ConversationView;
-use ccscope::session::claude;
-use ccscope::session::{Agent, SessionEntry};
+use dtrail::app::App;
+use dtrail::conversation::ConversationView;
+use dtrail::session::claude;
+use dtrail::session::{Agent, SessionEntry};
 
 fn long_conversation(height: u16) -> ConversationView {
     let lines: Vec<String> = (0..60).map(|i| format!("line{i}")).collect();

@@ -1,9 +1,9 @@
 //! Render smoke tests: draw each screen with a TestBackend and assert it does
 //! not panic and produces non-empty output. Uses synthetic data only.
 
-use ccscope::app::App;
-use ccscope::session::{Agent, SessionEntry, claude};
-use ccscope::ui;
+use dtrail::app::App;
+use dtrail::session::{Agent, SessionEntry, claude};
+use dtrail::ui;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 

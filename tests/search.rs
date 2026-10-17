@@ -3,10 +3,10 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use ccscope::app::{App, Mode};
-use ccscope::conversation::ConversationView;
-use ccscope::session::claude;
-use ccscope::session::{Agent, SessionEntry};
+use dtrail::app::{App, Mode};
+use dtrail::conversation::ConversationView;
+use dtrail::session::claude;
+use dtrail::session::{Agent, SessionEntry};
 
 fn conversation() -> ConversationView {
     let jsonl = concat!(

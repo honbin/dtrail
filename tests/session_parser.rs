@@ -1,8 +1,8 @@
 //! Parser tests: message extraction, tool_use/tool_result linking, unknown
 //! events, and tolerance of incomplete records.
 
-use ccscope::session::claude;
-use ccscope::session::model::{Block, RecordKind, ToolResultContent};
+use dtrail::session::claude;
+use dtrail::session::model::{Block, RecordKind, ToolResultContent};
 
 fn fixture() -> String {
     std::fs::read_to_string(concat!(

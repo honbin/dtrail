@@ -1,4 +1,4 @@
-//! ccscope library crate.
+//! dtrail library crate.
 //!
 //! Exposes parsing ([`session`]) and display ([`view`]) separately from the
 //! TUI so they can be unit tested.

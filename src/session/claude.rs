@@ -321,13 +321,13 @@ mod tests {
 
     #[test]
     fn discover_in_missing_directory_is_empty() {
-        let missing = std::env::temp_dir().join("ccscope-definitely-not-here-12345");
+        let missing = std::env::temp_dir().join("dtrail-definitely-not-here-12345");
         assert!(discover_in(&missing).is_empty());
     }
 
     #[test]
     fn discover_in_reads_metadata_and_tags_agent() {
-        let tmp = std::env::temp_dir().join(format!("ccscope-claude-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dtrail-claude-{}", std::process::id()));
         let proj = tmp.join("-Users-me-projects-demo");
         fs::create_dir_all(&proj).unwrap();
         let path = proj.join("sess-1.jsonl");
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn summary_falls_back_to_the_raw_user_utterance() {
-        let tmp = std::env::temp_dir().join(format!("ccscope-claude-fb-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dtrail-claude-fb-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("sess-x.jsonl");
         fs::write(
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn a_session_with_no_user_message_has_an_empty_preview() {
-        let tmp = std::env::temp_dir().join(format!("ccscope-claude-empty-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dtrail-claude-empty-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("sess-x.jsonl");
         fs::write(
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn summary_reads_an_array_content_user_message() {
-        let tmp = std::env::temp_dir().join(format!("ccscope-claude-arr-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dtrail-claude-arr-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("sess-x.jsonl");
         fs::write(
@@ -423,7 +423,7 @@ mod tests {
     fn summary_skips_a_meta_opener_then_reads_the_array_prompt() {
         // Mirrors a real envelope: meta records, a command-only string user
         // message, then the real prompt as an array-content user message.
-        let tmp = std::env::temp_dir().join(format!("ccscope-claude-env-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dtrail-claude-env-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("sess-x.jsonl");
         fs::write(
