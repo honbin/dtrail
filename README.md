@@ -52,7 +52,7 @@ missing path is reported as an error rather than falling back to discovery.
 
 Browsing and reading are distinct: the list pane keeps the list and preview
 side by side so you can compare sessions, and diving into a session reads it
-full-width. `O` overrides the layout manually, independent of diving.
+full-width. `z` overrides the layout manually, independent of diving.
 
 ### List pane
 
@@ -66,7 +66,7 @@ full-width. `O` overrides the layout manually, independent of diving.
 | `a` | Cycle the agent filter: all → Claude → Codex |
 | `/` | Filter by project or preview text |
 | `Enter` / `l` / `Tab` | Dive into the session and read it full-width |
-| `O` | Toggle full-width / split |
+| `z` | Toggle full-width / split (zoom) |
 | `q` | Quit |
 
 ### Conversation pane
@@ -81,7 +81,7 @@ full-width. `O` overrides the layout manually, independent of diving.
 | `o` / `Enter` | Fold / unfold the item under the cursor (`▸`/`▾`) |
 | `/` | Search within the session |
 | `n` / `N` | Next / previous match |
-| `O` | Toggle full-width / split |
+| `z` | Toggle full-width / split (zoom) |
 | `Tab` / `h` / `q` | Back to the split list (or quit if opened directly) |
 
 `Ctrl-l` forces a full redraw from any screen.

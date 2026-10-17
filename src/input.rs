@@ -153,7 +153,7 @@ impl InputState {
             KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
             KeyCode::Char('a') => app.cycle_agent_filter(),
             KeyCode::Char('/') => app.start_search(),
-            KeyCode::Char('O') => app.toggle_maximize(),
+            KeyCode::Char('z') => app.toggle_maximize(),
             KeyCode::Enter | KeyCode::Tab | KeyCode::Char('l') => app.dive_into_conversation(),
             _ => self.handle_movement(app, key, was_pending_g),
         }
@@ -163,7 +163,7 @@ impl InputState {
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('h') => app.back(),
             KeyCode::Tab if !app.is_direct() => app.back(),
-            KeyCode::Char('O') => app.toggle_maximize(),
+            KeyCode::Char('z') => app.toggle_maximize(),
             KeyCode::Char('/') => app.start_search(),
             KeyCode::Char('n') => app.search_next(),
             KeyCode::Char('N') => app.search_prev(),
