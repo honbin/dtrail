@@ -192,8 +192,15 @@ fn list_line(
             Style::default().fg(agent_color(entry.agent)),
         ));
     }
+    // Dim rows whose preview is only a slash-command/meta line (or empty): still
+    // in date order, just de-emphasized so the eye skips them while scanning.
+    let body_fg = if crate::session::discovery::is_command_or_meta(&entry.summary) {
+        Color::DarkGray
+    } else {
+        Color::White
+    };
     let body = fit_to_width(&body, total.saturating_sub(used));
-    spans.push(Span::styled(body, Style::default().fg(Color::White)));
+    spans.push(Span::styled(body, Style::default().fg(body_fg)));
     Line::from(spans)
 }
 
@@ -382,5 +389,34 @@ fn style_for(role: Role) -> Style {
         Role::ToolHeader => Style::default().fg(Color::Yellow),
         Role::ToolBody => Style::default().fg(Color::Gray),
         Role::System => Style::default().fg(Color::Magenta),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn entry(summary: &str) -> SessionEntry {
+        SessionEntry {
+            agent: Agent::Claude,
+            path: PathBuf::from("/x"),
+            session_id: "id".to_string(),
+            project: "/home/me/widget".to_string(),
+            modified: Some(SystemTime::UNIX_EPOCH),
+            summary: summary.to_string(),
+        }
+    }
+
+    fn body_fg(summary: &str) -> Option<Color> {
+        let line = list_line(&entry(summary), false, true, SystemTime::UNIX_EPOCH, 80, false);
+        line.spans.last().and_then(|s| s.style.fg)
+    }
+
+    #[test]
+    fn a_command_only_or_empty_preview_row_is_dimmed() {
+        assert_eq!(body_fg("real prompt text"), Some(Color::White));
+        assert_eq!(body_fg("<command-name>/clear</command-name>"), Some(Color::DarkGray));
+        assert_eq!(body_fg(""), Some(Color::DarkGray)); // "(no preview)"
     }
 }
