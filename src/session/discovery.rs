@@ -143,10 +143,11 @@ fn agent_of_file(path: &Path) -> Option<Agent> {
 
 /// Injected wrappers that aren't a real prompt: the slash-command family
 /// (`<command-name>`, `<command-message>`, `<command-args>`), local command
-/// output (`<local-command-stdout>`, `<local-command-stderr>`), and interrupt
-/// markers. Matched by their specific tag prefixes, not a bare `<`, so a genuine
-/// prompt that happens to start with `<` (e.g. "<div> isn't working") is not
-/// mistaken for metadata.
+/// output (`<local-command-stdout>`, `<local-command-stderr>`), interrupt
+/// markers, and Claude Code's IDE context turns (`<ide_opened_file>`,
+/// `<ide_selection>`). Matched by their specific tag prefixes, not a bare `<`, so
+/// a genuine prompt that happens to start with `<` (e.g. "<div> isn't working") is
+/// not mistaken for metadata.
 ///
 /// This is a text heuristic for Claude and for Codex logs that predate the
 /// per-turn origin metadata; current Codex logs are classified structurally
@@ -157,6 +158,8 @@ pub(crate) fn is_command_or_meta(text: &str) -> bool {
         || t.starts_with("<command-")
         || t.starts_with("<local-command-")
         || t.starts_with("[Request interrupted")
+        || t.starts_with("<ide_opened_file")
+        || t.starts_with("<ide_selection")
 }
 
 #[cfg(test)]
@@ -174,6 +177,13 @@ mod tests {
         ));
         assert!(is_command_or_meta("[Request interrupted by user]"));
         assert!(is_command_or_meta("   "));
+        // Claude Code IDE context turns are injected, not typed by the user.
+        assert!(is_command_or_meta(
+            "<ide_opened_file>/src/main.rs</ide_opened_file>"
+        ));
+        assert!(is_command_or_meta(
+            "<ide_selection>lines 1-5</ide_selection>"
+        ));
         assert!(!is_command_or_meta("最適化できますか？"));
         // A real prompt that merely starts with `<` must not be treated as meta.
         assert!(!is_command_or_meta("<div> isn't working"));
