@@ -65,6 +65,7 @@ scroll it with the list still visible; `Enter` dives in and reads full-width.
 | `Space` | Page down |
 | `gg` / `G` | Jump to first / last |
 | `a` | Cycle the agent filter: all → Claude → Codex |
+| `p` | Toggle hiding sessions with empty or command-only previews |
 | `/` | Filter by project or preview text |
 | `l` / `→` / `Tab` | Move into the body, keeping the split (scroll with `j`/`k`) |
 | `Enter` | Dive into the session and read it full-width |

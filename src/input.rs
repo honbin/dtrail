@@ -178,6 +178,7 @@ impl InputState {
         match key.code {
             KeyCode::Char('q') => app.should_quit = true,
             KeyCode::Char('a') => app.cycle_agent_filter(),
+            KeyCode::Char('p') => app.toggle_prose_only(),
             KeyCode::Char('/') => app.start_search(),
             KeyCode::Char('z') => app.toggle_maximize(),
             KeyCode::Enter => app.dive_into_conversation(),
@@ -321,6 +322,32 @@ mod tests {
         input.handle(&mut app, key('g')); // gg chord
         input.handle(&mut app, key('g'));
         assert_eq!(app.list_selected(), 0);
+    }
+
+    #[test]
+    fn p_toggles_hiding_command_only_and_empty_previews() {
+        let prose1 = entry("/a"); // entry() gives a plain "summary"
+        let mut command = entry("/b");
+        command.summary = "<command-name>/clear</command-name>".to_string();
+        let prose2 = entry("/c");
+        let mut app = App::with_entries(vec![prose1, command, prose2]);
+        app.sync_list_viewport(10);
+        let mut input = InputState::default();
+
+        assert_eq!(app.filtered().len(), 3); // all shown by default
+
+        // Cursor on the last session (a prose one) before hiding.
+        input.handle(&mut app, key('G'));
+        assert_eq!(app.list_selected(), 2);
+
+        input.handle(&mut app, key('p'));
+        assert!(app.prose_only());
+        assert_eq!(app.filtered().len(), 2); // the command-only session is hidden
+        assert_eq!(app.list_selected(), 1); // still on the same session, not the top
+
+        input.handle(&mut app, key('p'));
+        assert!(!app.prose_only());
+        assert_eq!(app.filtered().len(), 3);
     }
 
     #[test]

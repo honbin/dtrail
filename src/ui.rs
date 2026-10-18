@@ -97,6 +97,8 @@ fn draw_list(frame: &mut Frame, app: &mut App, area: Rect, now: SystemTime) {
     let lines: Vec<Line> = if filtered.is_empty() {
         let msg = if !app.filter_query().is_empty() {
             "no matches"
+        } else if app.prose_only() {
+            "no sessions with a prose preview"
         } else if app.agent_filter().is_some() {
             "no sessions for this agent"
         } else {
@@ -295,11 +297,12 @@ fn status_text(app: &App) -> (String, &'static str) {
             let count = app.filtered().len();
             let shown = count.min(app.list_selected() + 1);
             let agent = app.agent_filter().map(|a| a.name()).unwrap_or("All");
-            let left = format!(" agent:{agent}  {shown}/{count}");
+            let prose = if app.prose_only() { "  prose-only" } else { "" };
+            let left = format!(" agent:{agent}{prose}  {shown}/{count}");
             let hint = if app.mode() == Mode::Search {
                 "↑↓ select  Enter open  Esc cancel "
             } else {
-                "j/k move  a agent  / filter  Enter open  q quit "
+                "j/k move  a agent  p prose  / filter  q quit "
             };
             (left, hint)
         }
@@ -409,14 +412,24 @@ mod tests {
     }
 
     fn body_fg(summary: &str) -> Option<Color> {
-        let line = list_line(&entry(summary), false, true, SystemTime::UNIX_EPOCH, 80, false);
+        let line = list_line(
+            &entry(summary),
+            false,
+            true,
+            SystemTime::UNIX_EPOCH,
+            80,
+            false,
+        );
         line.spans.last().and_then(|s| s.style.fg)
     }
 
     #[test]
     fn a_command_only_or_empty_preview_row_is_dimmed() {
         assert_eq!(body_fg("real prompt text"), Some(Color::White));
-        assert_eq!(body_fg("<command-name>/clear</command-name>"), Some(Color::DarkGray));
+        assert_eq!(
+            body_fg("<command-name>/clear</command-name>"),
+            Some(Color::DarkGray)
+        );
         assert_eq!(body_fg(""), Some(Color::DarkGray)); // "(no preview)"
     }
 }

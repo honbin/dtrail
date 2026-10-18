@@ -7,6 +7,7 @@
 
 use crate::conversation::ConversationView;
 use crate::scroll::Scroll;
+use crate::session::discovery::is_command_or_meta;
 use crate::session::{Agent, Session, SessionEntry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +32,9 @@ pub struct App {
     filter_query: String,
     /// Show only this agent's sessions; `None` means all agents.
     agent_filter: Option<Agent>,
+    /// Hide sessions whose preview is only a slash-command/meta line (or empty),
+    /// i.e. those with no human prose, to cut noise when retracing.
+    prose_only: bool,
     /// Selection and scroll offset over `filtered`.
     list: Scroll,
     conversation: Option<ConversationView>,
@@ -59,6 +63,7 @@ impl App {
             filtered,
             filter_query: String::new(),
             agent_filter: None,
+            prose_only: false,
             list: Scroll::default(),
             conversation: None,
             loaded_index: None,
@@ -79,6 +84,7 @@ impl App {
             filtered: Vec::new(),
             filter_query: String::new(),
             agent_filter: None,
+            prose_only: false,
             list: Scroll::default(),
             conversation: Some(ConversationView::new(session)),
             loaded_index: None,
@@ -304,6 +310,24 @@ impl App {
         self.agent_filter
     }
 
+    pub fn prose_only(&self) -> bool {
+        self.prose_only
+    }
+
+    /// Toggle hiding command-only/empty-preview sessions (default off). Keep the
+    /// cursor on the current session when it survives the toggle, so pressing `p`
+    /// mid-list doesn't throw you back to the top.
+    pub fn toggle_prose_only(&mut self) {
+        let current = self.selected_entry_index();
+        self.prose_only = !self.prose_only;
+        self.recompute_filter();
+        if let Some(entry_idx) = current
+            && let Some(pos) = self.filtered.iter().position(|&i| i == entry_idx)
+        {
+            self.list.jump_to(pos, self.filtered.len(), 0);
+        }
+    }
+
     /// Whether the loaded sessions span more than one agent. Gates both the
     /// list's agent tag and the agent filter, so the two stay consistent.
     pub fn has_multiple_agents(&self) -> bool {
@@ -393,14 +417,16 @@ impl App {
     }
 
     fn recompute_filter(&mut self) {
-        // Agent filter and text query compose with AND.
+        // Agent filter, prose-only filter, and text query compose with AND.
         let q = self.filter_query.to_lowercase();
         let agent = self.agent_filter;
+        let prose_only = self.prose_only;
         self.filtered = self
             .entries
             .iter()
             .enumerate()
             .filter(|(_, e)| agent.is_none_or(|a| e.agent == a))
+            .filter(|(_, e)| !prose_only || !is_command_or_meta(&e.summary))
             .filter(|(_, e)| {
                 q.is_empty()
                     || e.project.to_lowercase().contains(&q)
@@ -410,6 +436,8 @@ impl App {
             .collect();
         // Narrowing lands on the first match (so Enter opens it); otherwise keep
         // the current selection, clamped into range. Reset the scroll to the top.
+        // prose-only isn't counted as narrowing: toggle_prose_only restores the
+        // cursor to the current session itself rather than jumping to the top.
         let narrowed = !q.is_empty() || agent.is_some();
         let cursor = if narrowed { 0 } else { self.list.cursor() };
         self.list.restore(cursor, 0, self.filtered.len());
