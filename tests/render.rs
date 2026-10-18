@@ -113,6 +113,27 @@ fn list_renders_with_entries_and_filter() {
 }
 
 #[test]
+fn a_mixed_agent_list_tags_each_row() {
+    let row = |agent, project: &str, summary: &str| SessionEntry {
+        agent,
+        path: PathBuf::from("/x"),
+        session_id: "id".to_string(),
+        project: project.to_string(),
+        modified: Some(SystemTime::UNIX_EPOCH),
+        summary: summary.to_string(),
+    };
+    // Two agents present -> each row carries a (tinted) agent tag.
+    let mut app = App::with_entries(vec![
+        row(Agent::Claude, "/home/me/a", "alpha"),
+        row(Agent::Codex, "/home/me/b", "beta"),
+    ]);
+    let out = render(&mut app);
+    assert!(out.contains("Claude"));
+    assert!(out.contains("Codex"));
+    assert!(out.contains("alpha") && out.contains("beta"));
+}
+
+#[test]
 fn empty_list_renders_without_panicking() {
     // e.g. the session directory does not exist, so discovery found nothing.
     let mut app = App::with_entries(vec![]);

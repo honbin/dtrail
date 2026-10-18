@@ -12,7 +12,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::{App, Focus, Mode};
 use crate::conversation::ConversationView;
 use crate::datefmt::{format_timestamp, relative_time};
-use crate::session::SessionEntry;
+use crate::session::{Agent, SessionEntry};
 use crate::text::{clip_to_width, display_width, fit_to_width, sanitize_display};
 use crate::view::Role;
 
@@ -148,14 +148,19 @@ fn list_line(
         &entry.summary
     };
     let age = format!("{when:>6}");
-    let rest = if show_agent {
-        // Pad the name to the widest label so the project column stays aligned.
-        sanitize_display(&format!(
-            "  {:<6}  {project}  {summary}",
-            entry.agent.label()
-        ))
+    // Split the agent tag out so it can be tinted on its own. Only shown (and
+    // only non-empty) when the list spans both agents; padded to the widest
+    // label so the project column stays aligned.
+    let (tag, body) = if show_agent {
+        (
+            sanitize_display(&format!("  {:<6}", entry.agent.label())),
+            sanitize_display(&format!("  {project}  {summary}")),
+        )
     } else {
-        sanitize_display(&format!("  {project}  {summary}"))
+        (
+            String::new(),
+            sanitize_display(&format!("  {project}  {summary}")),
+        )
     };
 
     // The selected row is a uniform highlight; column coloring would clash.
@@ -170,18 +175,35 @@ fn list_line(
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
         };
-        let text = fit_to_width(&format!("{age}{rest}"), width as usize);
+        let text = fit_to_width(&format!("{age}{tag}{body}"), width as usize);
         return Line::from(Span::styled(text, style));
     }
 
-    // Otherwise dim the age column so the eye lands on project and summary.
+    // Otherwise dim the age column, tint the agent tag, leave the rest plain.
     let total = width as usize;
     let age = clip_to_width(&age, total);
-    let rest = fit_to_width(&rest, total.saturating_sub(display_width(&age)));
-    Line::from(vec![
-        Span::styled(age, Style::default().fg(Color::Gray)),
-        Span::styled(rest, Style::default().fg(Color::White)),
-    ])
+    let mut used = display_width(&age);
+    let mut spans = vec![Span::styled(age, Style::default().fg(Color::Gray))];
+    if !tag.is_empty() {
+        let tag = clip_to_width(&tag, total.saturating_sub(used));
+        used += display_width(&tag);
+        spans.push(Span::styled(
+            tag,
+            Style::default().fg(agent_color(entry.agent)),
+        ));
+    }
+    let body = fit_to_width(&body, total.saturating_sub(used));
+    spans.push(Span::styled(body, Style::default().fg(Color::White)));
+    Line::from(spans)
+}
+
+/// Per-agent tint for the list tag, so Claude and Codex rows read apart at a
+/// glance in a mixed list.
+fn agent_color(agent: Agent) -> Color {
+    match agent {
+        Agent::Claude => Color::Yellow,
+        Agent::Codex => Color::Green,
+    }
 }
 
 fn short_project(path: &str) -> String {
