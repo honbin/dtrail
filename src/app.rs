@@ -143,15 +143,29 @@ impl App {
         }
     }
 
+    /// Focus the conversation but keep the split, so the body can be scrolled
+    /// with the list still visible beside it (a peek, not a full read).
+    pub fn focus_conversation(&mut self) {
+        if self.conversation.is_none() {
+            return;
+        }
+        self.focus = Focus::Conversation;
+        self.carry_filter_into_search();
+    }
+
     /// Dive from the list into the conversation: focus it and read full-width.
-    /// Carry the list filter in as a body search so it jumps to that word and
-    /// `n`/`N` step through its occurrences.
     pub fn dive_into_conversation(&mut self) {
         if self.conversation.is_none() {
             return;
         }
         self.focus = Focus::Conversation;
         self.maximized = true;
+        self.carry_filter_into_search();
+    }
+
+    /// Carry the list filter in as a body search so entering the conversation
+    /// jumps to that word and `n`/`N` step through its occurrences.
+    fn carry_filter_into_search(&mut self) {
         if !self.filter_query.is_empty() {
             let q = self.filter_query.clone();
             if let Some(view) = self.conversation.as_mut() {

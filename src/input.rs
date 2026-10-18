@@ -180,14 +180,15 @@ impl InputState {
             KeyCode::Char('a') => app.cycle_agent_filter(),
             KeyCode::Char('/') => app.start_search(),
             KeyCode::Char('z') => app.toggle_maximize(),
-            KeyCode::Enter | KeyCode::Tab | KeyCode::Char('l') => app.dive_into_conversation(),
+            KeyCode::Enter => app.dive_into_conversation(),
+            KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => app.focus_conversation(),
             _ => self.handle_movement(app, key, was_pending_g),
         }
     }
 
     fn handle_conversation(&mut self, app: &mut App, key: KeyEvent, was_pending_g: bool) {
         match key.code {
-            KeyCode::Char('q') | KeyCode::Char('h') => app.back(),
+            KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Left => app.back(),
             KeyCode::Tab if !app.is_direct() => app.back(),
             KeyCode::Char('z') => app.toggle_maximize(),
             KeyCode::Char('/') => app.start_search(),
@@ -274,6 +275,35 @@ mod tests {
         assert!(app.maximized());
         input.handle(&mut app, key('z'));
         assert!(!app.maximized());
+    }
+
+    #[test]
+    fn l_peeks_into_the_body_keeping_the_split_while_enter_reads_full_width() {
+        // A real file so sync_selection can load a conversation to focus.
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/minimal-session.jsonl"
+        );
+        let mut loadable = entry("/a");
+        loadable.path = PathBuf::from(fixture);
+        let mut app = App::with_entries(vec![loadable]);
+        app.sync_list_viewport(10);
+        app.sync_selection(); // load the selected session's conversation
+        let mut input = InputState::default();
+
+        // l focuses the body but keeps the split, so the list stays visible.
+        input.handle(&mut app, key('l'));
+        assert_eq!(app.focus(), Focus::Conversation);
+        assert!(!app.maximized(), "peek must not hide the list");
+
+        // h returns to the list.
+        input.handle(&mut app, key('h'));
+        assert_eq!(app.focus(), Focus::List);
+
+        // Enter dives full-width.
+        input.handle(&mut app, code(KeyCode::Enter));
+        assert_eq!(app.focus(), Focus::Conversation);
+        assert!(app.maximized(), "Enter reads full-width");
     }
 
     #[test]

@@ -51,8 +51,9 @@ missing path is reported as an error rather than falling back to discovery.
 ## Keys
 
 Browsing and reading are distinct: the list pane keeps the list and preview
-side by side so you can compare sessions, and diving into a session reads it
-full-width. `z` overrides the layout manually, independent of diving.
+side by side so you can compare sessions. `l` / `Tab` moves into the body to
+scroll it with the list still visible; `Enter` dives in and reads full-width.
+`z` overrides the layout manually, independent of diving.
 
 ### List pane
 
@@ -65,7 +66,8 @@ full-width. `z` overrides the layout manually, independent of diving.
 | `gg` / `G` | Jump to first / last |
 | `a` | Cycle the agent filter: all → Claude → Codex |
 | `/` | Filter by project or preview text |
-| `Enter` / `l` / `Tab` | Dive into the session and read it full-width |
+| `l` / `→` / `Tab` | Move into the body, keeping the split (scroll with `j`/`k`) |
+| `Enter` | Dive into the session and read it full-width |
 | `z` | Toggle full-width / split (zoom) |
 | `q` | Quit |
 
@@ -84,7 +86,7 @@ full-width. `z` overrides the layout manually, independent of diving.
 | `v` / `V` | Start a line-wise visual selection (movement extends it) |
 | `y` | Yank the selection to the clipboard (then `Esc` cancels) |
 | `z` | Toggle full-width / split (zoom) |
-| `Tab` / `h` / `q` | Back to the split list (or quit if opened directly) |
+| `h` / `←` / `Tab` / `q` | Back to the list (or quit if opened directly) |
 
 `Ctrl-l` forces a full redraw from any screen. Yank copies via OSC 52, so it
 works over SSH on terminals that support it (tmux needs `set-clipboard on`).
