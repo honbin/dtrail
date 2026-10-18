@@ -64,7 +64,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_status(frame, app, status);
     frame.render_widget(
         Paragraph::new(Line::from(Span::raw(
-            search_message(app).unwrap_or_default(),
+            status_message(app).unwrap_or_default(),
         ))),
         message,
     );
@@ -211,6 +211,7 @@ fn draw_conversation(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let offset = view.offset();
     let cursor = view.cursor();
+    let selection = view.visual_range();
     let row_width = inner.width as usize;
     let lines: Vec<Line> = view
         .visible_rows()
@@ -220,17 +221,21 @@ fn draw_conversation(frame: &mut Frame, app: &mut App, area: Rect) {
             // rows are already wrapped to width, so scroll maps 1:1 to lines.
             let abs = offset + i;
             let on_cursor = focused && abs == cursor;
-            let on_match = !on_cursor && view.is_match(abs);
-            // Current position reverses; a search match gets a subtle background.
+            let on_selected = selection.is_some_and(|(lo, hi)| abs >= lo && abs <= hi);
+            let on_match = view.is_match(abs);
+            // Cursor reverses; the visual selection and a search match each get a
+            // background, cursor taking priority, then selection, then match.
             let mut style = style_for(row.role);
             if on_cursor {
                 style = style.add_modifier(Modifier::REVERSED);
+            } else if on_selected {
+                style = style.bg(Color::Indexed(24));
             } else if on_match {
                 style = style.bg(Color::Indexed(237));
             }
             // Pad only highlighted rows so the bar spans the pane; plain rows and
             // the area below are cleared by ratatui's per-frame buffer reset.
-            let text = if on_cursor || on_match {
+            let text = if on_cursor || on_selected || on_match {
                 fit_to_width(&row.text, row_width)
             } else {
                 row.text.clone()
@@ -274,12 +279,14 @@ fn status_text(app: &App) -> (String, &'static str) {
                 .conversation()
                 .map(conversation_status_left)
                 .unwrap_or_default();
-            let hint = if app.mode() == Mode::Search {
+            let hint = if app.mode() == Mode::Visual {
+                "j/k extend  y yank  Esc cancel "
+            } else if app.mode() == Mode::Search {
                 "↑↓ next  Enter accept  Esc cancel "
             } else if app.conversation().is_some_and(|v| v.match_info().is_some()) {
-                "n/N match  o fold  / search  q back "
+                "n/N match  o fold  v select  q back "
             } else {
-                "j/k move  o fold  / search  Tab list  q back "
+                "j/k move  o fold  v select  / search  q back "
             };
             (left, hint)
         }
@@ -297,6 +304,22 @@ fn conversation_status_left(view: &ConversationView) -> String {
     // `when` and `sid` come straight from the session file (raw timestamp / id),
     // so sanitize before they reach the terminal — same as body and list rows.
     sanitize_display(&format!(" {when}  {sid}  {pos}%"))
+}
+
+/// The reserved line below the status bar: a transient notice, the visual-mode
+/// hint, or otherwise the search/filter state.
+fn status_message(app: &App) -> Option<String> {
+    if let Some(note) = app.notice() {
+        return Some(format!(" {note}"));
+    }
+    if app.mode() == Mode::Visual {
+        let n = app
+            .conversation()
+            .and_then(|v| v.visual_range())
+            .map_or(0, |(lo, hi)| hi - lo + 1);
+        return Some(format!(" -- VISUAL --  {n} line(s)   y yank   Esc cancel"));
+    }
+    search_message(app)
 }
 
 /// Text for the reserved line below the status bar: the live prompt while

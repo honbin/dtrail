@@ -83,6 +83,27 @@ fn a_resize_still_pulls_the_cursor_back_into_view() {
     assert!(view.cursor() < view.offset() + 5);
 }
 
+#[test]
+fn yanking_an_empty_conversation_is_a_no_op_not_a_panic() {
+    let (session, _) = claude::parse("");
+    let mut view = ConversationView::new(session);
+    view.sync_viewport(80, 10);
+    view.begin_visual();
+    assert_eq!(view.selected_text(), None); // must not index into empty rows
+}
+
+#[test]
+fn visual_selection_spans_anchor_to_cursor_and_yanks_those_rows() {
+    let mut view = long_conversation(10);
+    view.begin_visual();
+    view.cursor_down(2);
+    assert_eq!(view.visual_range(), Some((0, 2)));
+    let text = view.selected_text().unwrap();
+    assert_eq!(text.lines().count(), 3); // rows 0, 1, 2
+    view.end_visual();
+    assert_eq!(view.visual_range(), None);
+}
+
 fn app_with_entries(n: usize) -> App {
     let entries = (0..n)
         .map(|i| SessionEntry {

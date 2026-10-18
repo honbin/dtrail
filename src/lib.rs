@@ -4,6 +4,7 @@
 //! TUI so they can be unit tested.
 
 pub mod app;
+pub mod clipboard;
 pub mod conversation;
 pub mod datefmt;
 pub mod input;

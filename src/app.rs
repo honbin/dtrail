@@ -15,11 +15,13 @@ pub enum Focus {
     Conversation,
 }
 
-/// Normal navigation vs. editing a search/filter query.
+/// Normal navigation, editing a search/filter query, or a line-wise visual
+/// selection in the conversation (for yanking).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Search,
+    Visual,
 }
 
 pub struct App {
@@ -42,6 +44,9 @@ pub struct App {
     mode: Mode,
     /// Query being edited while in [`Mode::Search`].
     input_buffer: String,
+    /// A transient one-line notice (e.g. "Yanked 3 lines"), shown until the next
+    /// key. Cleared at the start of each input dispatch.
+    notice: Option<String>,
     pub should_quit: bool,
 }
 
@@ -62,6 +67,7 @@ impl App {
             maximized: false,
             mode: Mode::Normal,
             input_buffer: String::new(),
+            notice: None,
             should_quit: false,
         }
     }
@@ -81,6 +87,7 @@ impl App {
             maximized: true,
             mode: Mode::Normal,
             input_buffer: String::new(),
+            notice: None,
             should_quit: false,
         }
     }
@@ -103,6 +110,37 @@ impl App {
 
     pub fn input_buffer(&self) -> &str {
         &self.input_buffer
+    }
+
+    /// A transient notice to show on the reserved line, if any.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    pub fn set_notice(&mut self, text: impl Into<String>) {
+        self.notice = Some(text.into());
+    }
+
+    pub fn clear_notice(&mut self) {
+        self.notice = None;
+    }
+
+    /// Enter a line-wise visual selection in the conversation (no-op elsewhere).
+    pub fn begin_visual(&mut self) {
+        if self.focus == Focus::Conversation
+            && let Some(view) = self.conversation.as_mut()
+        {
+            view.begin_visual();
+            self.mode = Mode::Visual;
+        }
+    }
+
+    /// Leave visual mode, dropping the selection.
+    pub fn cancel_visual(&mut self) {
+        self.mode = Mode::Normal;
+        if let Some(view) = self.conversation.as_mut() {
+            view.end_visual();
+        }
     }
 
     /// Dive from the list into the conversation: focus it and read full-width.

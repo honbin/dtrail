@@ -36,6 +36,9 @@ pub struct ConversationView {
     /// A query to apply on the next layout, carried in from the list filter so
     /// it is applied at the real (full) width rather than the preview width.
     carried_search: Option<String>,
+    /// Row where a line-wise visual selection was started; the selection spans
+    /// from here to the cursor. `None` outside visual mode.
+    visual_anchor: Option<usize>,
 }
 
 impl ConversationView {
@@ -54,7 +57,42 @@ impl ConversationView {
             match_cursor: 0,
             search_origin: None,
             carried_search: None,
+            visual_anchor: None,
         }
+    }
+
+    /// Start a line-wise visual selection anchored at the current row.
+    pub fn begin_visual(&mut self) {
+        self.visual_anchor = Some(self.scroll.cursor());
+    }
+
+    /// Leave visual mode, dropping the selection.
+    pub fn end_visual(&mut self) {
+        self.visual_anchor = None;
+    }
+
+    /// The selected row range (inclusive), or `None` when not selecting.
+    pub fn visual_range(&self) -> Option<(usize, usize)> {
+        let anchor = self.visual_anchor?;
+        let cursor = self.scroll.cursor();
+        Some((anchor.min(cursor), anchor.max(cursor)))
+    }
+
+    /// Text of the selected rows (as shown), newline-joined, for yanking.
+    pub fn selected_text(&self) -> Option<String> {
+        if self.rows.is_empty() {
+            return None;
+        }
+        let (lo, hi) = self.visual_range()?;
+        let last = self.rows.len() - 1;
+        let (lo, hi) = (lo.min(last), hi.min(last));
+        Some(
+            self.rows[lo..=hi]
+                .iter()
+                .map(|r| r.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
     }
 
     pub fn session_id(&self) -> Option<&str> {

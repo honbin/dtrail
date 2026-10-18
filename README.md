@@ -81,10 +81,13 @@ full-width. `z` overrides the layout manually, independent of diving.
 | `o` / `Enter` | Fold / unfold the item under the cursor (`▸`/`▾`) |
 | `/` | Search within the session |
 | `n` / `N` | Next / previous match |
+| `v` / `V` | Start a line-wise visual selection (movement extends it) |
+| `y` | Yank the selection to the clipboard (then `Esc` cancels) |
 | `z` | Toggle full-width / split (zoom) |
 | `Tab` / `h` / `q` | Back to the split list (or quit if opened directly) |
 
-`Ctrl-l` forces a full redraw from any screen.
+`Ctrl-l` forces a full redraw from any screen. Yank copies via OSC 52, so it
+works over SSH on terminals that support it (tmux needs `set-clipboard on`).
 
 Opening a session from a filtered list carries the query into the conversation
 as a body search, jumping to the first occurrence so `n`/`N` step through it.

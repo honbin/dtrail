@@ -83,20 +83,46 @@ pub struct InputState {
 impl InputState {
     pub fn handle(&mut self, app: &mut App, key: KeyEvent) {
         let was_pending_g = std::mem::take(&mut self.pending_g);
+        // A notice (e.g. "Yanked N lines") lives for one keypress.
+        app.clear_notice();
 
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             app.should_quit = true;
             return;
         }
 
-        if app.mode() == Mode::Search {
-            self.handle_search_input(app, key);
-            return;
+        match app.mode() {
+            Mode::Search => return self.handle_search_input(app, key),
+            Mode::Visual => return self.handle_visual(app, key, was_pending_g),
+            Mode::Normal => {}
         }
 
         match app.focus() {
             Focus::List => self.handle_list(app, key, was_pending_g),
             Focus::Conversation => self.handle_conversation(app, key, was_pending_g),
+        }
+    }
+
+    /// Line-wise visual selection in the conversation: movement extends the
+    /// selection, `y` yanks it to the clipboard, `v`/`V`/`Esc` cancel.
+    fn handle_visual(&mut self, app: &mut App, key: KeyEvent, was_pending_g: bool) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('v') | KeyCode::Char('V') => app.cancel_visual(),
+            KeyCode::Char('y') => {
+                let lines = app.conversation().and_then(|v| v.visual_range());
+                let text = app.conversation().and_then(|v| v.selected_text());
+                if let (Some((lo, hi)), Some(text)) = (lines, text) {
+                    let n = hi - lo + 1;
+                    crate::clipboard::copy(&text);
+                    app.set_notice(format!("Yanked {n} line{}", if n == 1 { "" } else { "s" }));
+                }
+                app.cancel_visual();
+            }
+            _ => {
+                if let Some(view) = app.conversation_mut() {
+                    self.handle_movement(view, key, was_pending_g);
+                }
+            }
         }
     }
 
@@ -167,6 +193,7 @@ impl InputState {
             KeyCode::Char('/') => app.start_search(),
             KeyCode::Char('n') => app.search_next(),
             KeyCode::Char('N') => app.search_prev(),
+            KeyCode::Char('v') | KeyCode::Char('V') => app.begin_visual(),
             KeyCode::Char('o') | KeyCode::Enter => {
                 if let Some(view) = app.conversation_mut() {
                     view.toggle_fold_under_cursor();
@@ -318,5 +345,31 @@ mod tests {
         let mut input = InputState::default();
         input.handle(&mut app, key('q'));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn visual_select_then_yank_copies_and_exits() {
+        let mut app = conversation_app();
+        let mut input = InputState::default();
+
+        input.handle(&mut app, key('v'));
+        assert_eq!(app.mode(), Mode::Visual);
+        input.handle(&mut app, key('j')); // extend the selection by one row
+        input.handle(&mut app, key('y'));
+
+        assert_eq!(app.mode(), Mode::Normal);
+        assert_eq!(app.notice(), Some("Yanked 2 lines"));
+    }
+
+    #[test]
+    fn esc_cancels_visual_without_yanking() {
+        let mut app = conversation_app();
+        let mut input = InputState::default();
+
+        input.handle(&mut app, key('v'));
+        input.handle(&mut app, code(KeyCode::Esc));
+
+        assert_eq!(app.mode(), Mode::Normal);
+        assert_eq!(app.notice(), None);
     }
 }
