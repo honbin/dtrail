@@ -2,13 +2,14 @@
 
 A local TUI to retrace your Claude Code, Codex, and Cursor sessions.
 
-dtrail reads your local Claude Code, Codex, and Cursor session files and lets you
-re-read past work from the terminal — the conversation plus tool calls and
-their results, in chronological order, with Vim-like keyboard navigation. The
-layout is tig-like: a session list on the left (each row tagged `Claude`,
-`Codex`, or `Cursor` when more than one is present) and the selected session's conversation on the
-right, which follows the list cursor. It is a viewer, not a session manager: it
-never modifies your files and leaves nothing behind.
+dtrail reads local session files from Claude Code and Codex, and agent
+transcripts from Cursor. It lets you retrace past work from the terminal —
+conversations, tool calls, and their results in chronological order, with
+Vim-like keyboard navigation. The layout is tig-like: a session list on the
+left, with each row tagged `Claude`, `Codex`, or `Cursor` when multiple agents
+are present, and the selected session's conversation on the right. It is a
+viewer, not a session manager: it never modifies your files or leaves anything
+behind.
 
 ## Install
 
