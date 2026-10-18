@@ -83,7 +83,7 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
                 let is_message =
                     payload.and_then(|p| p.get("type")).and_then(Value::as_str) == Some("message");
                 let role = payload.and_then(|p| p.get("role")).and_then(Value::as_str);
-                if is_message && role == Some("user") {
+                if is_message && role == Some("user") && !is_injected_context(payload.unwrap()) {
                     let text = message_text(payload.unwrap());
                     if is_command_or_meta(&text) {
                         if raw_user.is_none() && !text.trim().is_empty() {
@@ -216,6 +216,26 @@ fn record_kind(payload: &Value) -> Option<RecordKind> {
     }
 }
 
+/// Whether a user `message` contains only known harness-injected context.
+/// Codex records each turn's origin kinds in passthrough metadata. Older logs,
+/// empty kind lists, and unknown kinds fall back to the text heuristic in `scan`.
+fn is_injected_context(payload: &Value) -> bool {
+    let Some(kinds) = payload
+        .get("internal_chat_message_metadata_passthrough")
+        .and_then(|m| m.get("content_item_kinds"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+
+    !kinds.is_empty()
+        && kinds.iter().all(|kind| {
+            kind.as_str().is_some_and(|kind| {
+                kind.starts_with("environments.") || kind.starts_with("additional_content.")
+            })
+        })
+}
+
 /// Concatenate the text of a message's content parts (`input_text`/`output_text`).
 fn message_text(payload: &Value) -> String {
     payload
@@ -340,6 +360,57 @@ mod tests {
         assert_eq!(e.project, "/Users/me/proj");
         assert_eq!(e.summary, "fix the bug");
         assert_eq!(e.session_id, "sid-1");
+    }
+
+    #[test]
+    fn injected_context_turns_are_skipped_for_the_preview() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-codex-inj-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("rollout.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"cwd":"/p","session_id":"sid"}}"#,
+                "\n",
+                // Harness-injected environment context (kinds lack `user.text`).
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","internal_chat_message_metadata_passthrough":{"content_item_kinds":["environments.environment_context"]},"content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/p</cwd>"}]}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]},"content":[{"type":"input_text","text":"fix the parser"}]}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let e = scan(&path).unwrap();
+        fs::remove_dir_all(&tmp).ok();
+
+        // The injected context is skipped; the preview is the real prompt.
+        assert_eq!(e.summary, "fix the parser");
+    }
+
+    #[test]
+    fn a_session_of_only_injected_turns_has_no_preview() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-codex-inj2-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("rollout.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"cwd":"/p","session_id":"sid"}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","internal_chat_message_metadata_passthrough":{"content_item_kinds":["environments.environment_context"]},"content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","internal_chat_message_metadata_passthrough":{"content_item_kinds":["additional_content.codex_apps_open_page"]},"content":[{"type":"input_text","text":"<external_codex_apps_open_page>{}</external_codex_apps_open_page>"}]}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let e = scan(&path).unwrap();
+        fs::remove_dir_all(&tmp).ok();
+
+        // No typed prompt and no raw fallback from injected turns: empty preview.
+        assert_eq!(e.summary, "");
     }
 
     #[test]

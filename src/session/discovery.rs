@@ -150,6 +150,10 @@ fn agent_of_file(path: &Path) -> Option<Agent> {
 /// markers. Matched by their specific tag prefixes, not a bare `<`, so a genuine
 /// prompt that happens to start with `<` (e.g. "<div> isn't working") is not
 /// mistaken for metadata.
+///
+/// This is a text heuristic for Claude and for Codex logs that predate the
+/// per-turn origin metadata; current Codex logs are classified structurally
+/// (see `codex::scan`).
 pub(crate) fn is_command_or_meta(text: &str) -> bool {
     let t = text.trim_start();
     t.is_empty()
