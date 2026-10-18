@@ -1,1 +1,5 @@
 /target
+
+# editor swap files and OS cruft
+*.sw[a-p]
+.DS_Store
