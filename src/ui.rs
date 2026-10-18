@@ -212,6 +212,7 @@ fn agent_color(agent: Agent) -> Color {
     match agent {
         Agent::Claude => Color::Yellow,
         Agent::Codex => Color::Green,
+        Agent::Cursor => Color::Blue,
     }
 }
 

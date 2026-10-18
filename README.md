@@ -1,12 +1,12 @@
 # dtrail
 
-A local TUI to retrace your Claude Code and Codex sessions.
+A local TUI to retrace your Claude Code, Codex, and Cursor sessions.
 
-dtrail reads your local Claude Code and Codex session files and lets you
+dtrail reads your local Claude Code, Codex, and Cursor session files and lets you
 re-read past work from the terminal — the conversation plus tool calls and
 their results, in chronological order, with Vim-like keyboard navigation. The
-layout is tig-like: a session list on the left (each row tagged `Claude` or
-`Codex` when both are present) and the selected session's conversation on the
+layout is tig-like: a session list on the left (each row tagged `Claude`,
+`Codex`, or `Cursor` when more than one is present) and the selected session's conversation on the
 right, which follows the list cursor. It is a viewer, not a session manager: it
 never modifies your files and leaves nothing behind.
 
@@ -42,10 +42,11 @@ first:
 
 - Claude Code: `$CLAUDE_CONFIG_DIR/projects` if set, else `~/.claude/projects`.
 - Codex: `$CODEX_HOME/sessions` if set, else `~/.codex/sessions`.
+- Cursor: `~/.cursor/projects` (agent transcripts).
 
 A directory argument browses every `.jsonl` under it (recursively), and a file
 argument opens that file — both independent of the default locations, with each
-file's agent detected from its content (Claude Code and Codex may be mixed). A
+file's agent detected from its content (the agents may be mixed). A
 missing path is reported as an error rather than falling back to discovery.
 
 ## Keys
@@ -64,7 +65,7 @@ scroll it with the list still visible; `Enter` dives in and reads full-width.
 | `Ctrl-f` / `Ctrl-b` | Full page down / up |
 | `Space` | Page down |
 | `gg` / `G` | Jump to first / last |
-| `a` | Cycle the agent filter: all → Claude → Codex |
+| `a` | Cycle the agent filter: all → Claude → Codex → Cursor |
 | `p` | Toggle hiding sessions with empty or command-only previews |
 | `/` | Filter by project or preview text |
 | `l` / `→` / `Tab` | Move into the body, keeping the split (scroll with `j`/`k`) |

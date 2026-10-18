@@ -1,0 +1,327 @@
+//! Cursor agent sessions: discovery and parsing.
+//!
+//! Layout: `~/.cursor/projects/<encoded-project>/agent-transcripts/<uuid>/<uuid>.jsonl`,
+//! one file per agent session. Each line is either a message
+//! (`{role, message:{content:[...]}}`) or a `turn_ended` control event (ignored).
+//! Content blocks are `text` and `tool_use` — the Anthropic message shape — so the
+//! parsing mirrors [`super::claude`]; there are no tool results or reasoning in the
+//! log, and no per-line `cwd`/`timestamp`/session id (project comes from the dir
+//! name, the session id from the file name).
+
+use std::fs;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+
+use super::discovery::{Agent, SessionEntry, is_command_or_meta};
+use super::model::{Block, ParseStats, Record, RecordKind, Session};
+
+/// Cursor's agent-transcript root: `~/.cursor/projects`.
+fn base_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".cursor").join("projects")
+}
+
+/// All Cursor sessions, newest first. Unreadable dirs/files are skipped.
+pub fn discover() -> Vec<SessionEntry> {
+    discover_in(&base_dir())
+}
+
+fn discover_in(projects_dir: &Path) -> Vec<SessionEntry> {
+    let mut entries = Vec::new();
+    let Ok(project_dirs) = fs::read_dir(projects_dir) else {
+        return entries;
+    };
+    for project_dir in project_dirs.flatten() {
+        let dir_path = project_dir.path();
+        if !dir_path.is_dir() {
+            continue;
+        }
+        // Transcripts are nested under agent-transcripts/<uuid>/, so walk down.
+        let mut files = Vec::new();
+        super::discovery::collect_jsonl(&dir_path, &mut files);
+        for path in files {
+            if let Some(entry) = scan_entry(&path, &dir_path) {
+                entries.push(entry);
+            }
+        }
+    }
+    entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
+    entries
+}
+
+/// Scan one Cursor transcript file (used by `discover_dir`, which supplies files
+/// from an arbitrary tree).
+pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
+    scan_entry(path, project_dir_of(path))
+}
+
+/// The project dir for a standalone file. Cursor nests transcripts under
+/// `<project>/agent-transcripts/<uuid>/`, so climb to the `agent-transcripts`
+/// parent rather than using the file's own parent (which is the `<uuid>` dir).
+fn project_dir_of(path: &Path) -> &Path {
+    let mut cur = path;
+    while let Some(parent) = cur.parent() {
+        if parent.file_name().and_then(|n| n.to_str()) == Some("agent-transcripts") {
+            return parent.parent().unwrap_or(parent);
+        }
+        cur = parent;
+    }
+    path.parent().unwrap_or(path)
+}
+
+fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
+    let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
+    let session_id = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let reader = BufReader::new(fs::File::open(path).ok()?);
+    // The real prompt (first non-command user text), preferred for the preview;
+    // otherwise fall back to the raw first user utterance (never invented).
+    let mut summary: Option<String> = None;
+    let mut raw_user: Option<String> = None;
+    for line in reader.lines().map_while(Result::ok) {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("role").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        let Some(text) = user_text(&value) else {
+            continue;
+        };
+        if is_command_or_meta(&text) {
+            if raw_user.is_none() && !text.trim().is_empty() {
+                raw_user = Some(text);
+            }
+        } else {
+            summary = Some(text);
+            break;
+        }
+    }
+
+    Some(SessionEntry {
+        agent: Agent::Cursor,
+        path: path.to_path_buf(),
+        session_id,
+        project: decode_project_dir(project_dir),
+        modified,
+        summary: summary.or(raw_user).unwrap_or_default(),
+    })
+}
+
+/// The user's prompt for the preview: the first non-empty `text` block, unwrapped
+/// from Cursor's `<user_query>…</user_query>`. That block also carries injected
+/// context (timestamps, git diff, attached files); the query is what the user
+/// actually typed, so the preview drops the rest.
+fn user_text(value: &Value) -> Option<String> {
+    let text = first_block_text(value.get("message")?.get("content")?)?;
+    Some(user_query(&text).unwrap_or(text))
+}
+
+/// Inner text of the first `<user_query>…</user_query>`, trimmed, if present.
+fn user_query(text: &str) -> Option<String> {
+    const OPEN: &str = "<user_query>";
+    let start = text.find(OPEN)? + OPEN.len();
+    let rest = &text[start..];
+    let end = rest.find("</user_query>")?;
+    Some(rest[..end].trim().to_string())
+}
+
+/// First non-empty `text` block from a message `content` array.
+fn first_block_text(content: &Value) -> Option<String> {
+    content
+        .as_array()?
+        .iter()
+        .filter_map(|b| {
+            (b.get("type").and_then(Value::as_str) == Some("text"))
+                .then(|| b.get("text").and_then(Value::as_str))
+                .flatten()
+        })
+        .map(str::trim)
+        .find(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
+/// Undo the dir-name encoding (`-` back to `/`); the transcript has no `cwd`.
+fn decode_project_dir(dir: &Path) -> String {
+    let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    name.replace('-', "/")
+}
+
+/// Parse each line independently; a line that fails to parse is skipped.
+pub fn parse(input: &str) -> (Session, ParseStats) {
+    let mut session = Session::default();
+    let mut stats = ParseStats::default();
+
+    for line in input.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        stats.total_lines += 1;
+
+        let value: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => {
+                stats.skipped_lines += 1;
+                continue;
+            }
+        };
+
+        if let Some(record) = parse_record(&value) {
+            session.records.push(record);
+        }
+    }
+
+    (session, stats)
+}
+
+/// A message line becomes a record; `turn_ended` (no `message`) is dropped.
+fn parse_record(value: &Value) -> Option<Record> {
+    let content = value.get("message")?.get("content")?;
+    let kind = match value.get("role").and_then(Value::as_str)? {
+        "user" => RecordKind::User(parse_content(content)),
+        "assistant" => RecordKind::Assistant(parse_content(content)),
+        other => RecordKind::System {
+            subtype: Some(other.to_string()),
+            text: String::new(),
+        },
+    };
+    Some(Record {
+        uuid: None,
+        parent_uuid: None,
+        timestamp: None,
+        kind,
+    })
+}
+
+/// `message.content` is an array of `text`/`tool_use` blocks (string tolerated).
+fn parse_content(content: &Value) -> Vec<Block> {
+    match content {
+        Value::String(s) => vec![Block::Text(s.clone())],
+        Value::Array(items) => items.iter().filter_map(parse_block).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_block(block: &Value) -> Option<Block> {
+    let b = match block.get("type").and_then(Value::as_str)? {
+        "text" => Block::Text(
+            block
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        ),
+        // Cursor tool_use carries no id; there are no tool_results to link to.
+        "tool_use" => Block::ToolUse {
+            id: String::new(),
+            name: block
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            input: block.get("input").cloned().unwrap_or(Value::Null),
+        },
+        other => Block::Unknown {
+            block_type: other.to_string(),
+        },
+    };
+    Some(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = concat!(
+        r#"{"role":"user","message":{"content":[{"type":"text","text":"fix the bug"}]}}"#,
+        "\n",
+        r#"{"role":"assistant","message":{"content":[{"type":"text","text":"on it"},{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}"#,
+        "\n",
+        r#"{"type":"turn_ended","status":"completed"}"#,
+        "\n",
+    );
+
+    #[test]
+    fn discover_in_walks_nested_transcripts_and_tags_agent() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-cursor-{}", std::process::id()));
+        let dir = tmp
+            .join("Users-me-projects-demo")
+            .join("agent-transcripts")
+            .join("abc-123");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("abc-123.jsonl"), SAMPLE).unwrap();
+
+        let entries = discover_in(&tmp);
+        fs::remove_dir_all(&tmp).ok();
+
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!(e.agent, Agent::Cursor);
+        assert_eq!(e.summary, "fix the bug");
+        assert_eq!(e.session_id, "abc-123");
+        assert_eq!(e.project, "Users/me/projects/demo");
+    }
+
+    #[test]
+    fn scan_derives_project_from_the_agent_transcripts_parent() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-cursor-pd-{}", std::process::id()));
+        let dir = tmp
+            .join("Users-me-projects-demo")
+            .join("agent-transcripts")
+            .join("u9");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("u9.jsonl");
+        fs::write(&path, SAMPLE).unwrap();
+
+        // discover_dir calls scan() with just the file path; the project is the
+        // dir above agent-transcripts, not the <uuid> dir below it.
+        let e = scan(&path).unwrap();
+        fs::remove_dir_all(&tmp).ok();
+        assert_eq!(e.project, "Users/me/projects/demo");
+    }
+
+    #[test]
+    fn preview_unwraps_the_user_query_from_surrounding_context() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-cursor-uq-{}", std::process::id()));
+        let dir = tmp.join("proj").join("agent-transcripts").join("u1");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("u1.jsonl"),
+            r#"{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>t</timestamp>\n<user_query>fix the parser</user_query>\n<attached_files>a.rs</attached_files>"}]}}"#,
+        )
+        .unwrap();
+
+        let entries = discover_in(&tmp);
+        fs::remove_dir_all(&tmp).ok();
+
+        // The preview is the query, not the injected context around it.
+        assert_eq!(entries[0].summary, "fix the parser");
+    }
+
+    #[test]
+    fn parse_maps_roles_and_blocks_and_ignores_turn_ended() {
+        let (session, stats) = parse(SAMPLE);
+        assert_eq!(stats.total_lines, 3);
+        // turn_ended is not a record; the two messages are.
+        assert_eq!(session.records.len(), 2);
+        assert!(matches!(session.records[0].kind, RecordKind::User(_)));
+        match &session.records[1].kind {
+            RecordKind::Assistant(blocks) => {
+                assert!(matches!(blocks[0], Block::Text(_)));
+                assert!(matches!(blocks[1], Block::ToolUse { .. }));
+            }
+            _ => panic!("expected an assistant record"),
+        }
+    }
+}

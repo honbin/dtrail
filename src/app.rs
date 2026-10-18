@@ -336,7 +336,7 @@ impl App {
             .is_some_and(|first| self.entries.iter().any(|e| e.agent != first.agent))
     }
 
-    /// Cycle the agent filter: all -> Claude -> Codex -> all. The exhaustive
+    /// Cycle the agent filter: all -> Claude -> Codex -> Cursor -> all. The exhaustive
     /// match means a new agent variant must be slotted in here. A no-op with a
     /// single agent, where the filter would only cycle through empty states.
     pub fn cycle_agent_filter(&mut self) {
@@ -346,7 +346,8 @@ impl App {
         self.agent_filter = match self.agent_filter {
             None => Some(Agent::Claude),
             Some(Agent::Claude) => Some(Agent::Codex),
-            Some(Agent::Codex) => None,
+            Some(Agent::Codex) => Some(Agent::Cursor),
+            Some(Agent::Cursor) => None,
         };
         self.recompute_filter();
     }

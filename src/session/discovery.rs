@@ -12,7 +12,7 @@ use std::time::SystemTime;
 use serde_json::Value;
 
 use super::model::{ParseStats, Session};
-use super::{claude, codex};
+use super::{claude, codex, cursor};
 
 /// Which coding agent produced a session. Identity only — the parsing and
 /// discovery for each live in that agent's module.
@@ -20,6 +20,7 @@ use super::{claude, codex};
 pub enum Agent {
     Claude,
     Codex,
+    Cursor,
 }
 
 impl Agent {
@@ -28,6 +29,7 @@ impl Agent {
         match self {
             Agent::Claude => "Claude",
             Agent::Codex => "Codex",
+            Agent::Cursor => "Cursor",
         }
     }
 
@@ -36,6 +38,7 @@ impl Agent {
         match self {
             Agent::Claude => "Claude Code",
             Agent::Codex => "Codex",
+            Agent::Cursor => "Cursor",
         }
     }
 }
@@ -60,6 +63,7 @@ pub struct SessionEntry {
 pub fn discover() -> Vec<SessionEntry> {
     let mut entries = claude::discover();
     entries.extend(codex::discover());
+    entries.extend(cursor::discover());
     entries.sort_by_key(|e| Reverse(e.modified));
     entries
 }
@@ -74,6 +78,7 @@ pub fn discover_dir(root: &Path) -> Vec<SessionEntry> {
         .filter_map(|p| match agent_of_file(p)? {
             Agent::Claude => claude::scan(p),
             Agent::Codex => codex::scan(p),
+            Agent::Cursor => cursor::scan(p),
         })
         .collect();
     entries.sort_by_key(|e| Reverse(e.modified));
@@ -101,47 +106,39 @@ pub fn parse(agent: Agent, input: &str) -> (Session, ParseStats) {
     match agent {
         Agent::Claude => claude::parse(input),
         Agent::Codex => codex::parse(input),
+        Agent::Cursor => cursor::parse(input),
     }
 }
 
-fn agent_of_type(t: &str) -> Agent {
-    match t {
-        "session_meta" | "response_item" | "event_msg" => Agent::Codex,
-        _ => Agent::Claude,
+/// Classify one parsed line by agent, or `None` if it carries no agent signal.
+/// Codex and Claude tag every line with a `type`; Cursor's `turn_ended` events do
+/// too, while its message lines have a top-level `role` and no `type`.
+fn agent_of_value(value: &Value) -> Option<Agent> {
+    match value.get("type").and_then(Value::as_str) {
+        Some("session_meta" | "response_item" | "event_msg") => Some(Agent::Codex),
+        Some("turn_ended") => Some(Agent::Cursor),
+        Some(_) => Some(Agent::Claude),
+        None => value.get("role").is_some().then_some(Agent::Cursor),
     }
 }
 
 /// Guess the agent from a file's content, for a path given on the command line.
 pub fn detect(input: &str) -> Agent {
-    for line in input.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Ok(value) = serde_json::from_str::<Value>(line)
-            && let Some(t) = value.get("type").and_then(Value::as_str)
-        {
-            return agent_of_type(t);
-        }
-    }
-    Agent::Claude
+    input
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .find_map(|value| agent_of_value(&value))
+        .unwrap_or(Agent::Claude)
 }
 
 /// Like [`detect`] but reads only the head of a file (for `discover_dir`).
 fn agent_of_file(path: &Path) -> Option<Agent> {
     let file = fs::File::open(path).ok()?;
-    for line in BufReader::new(file).lines().map_while(Result::ok) {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Ok(value) = serde_json::from_str::<Value>(line)
-            && let Some(t) = value.get("type").and_then(Value::as_str)
-        {
-            return Some(agent_of_type(t));
-        }
-    }
-    None
+    BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .find_map(|value| agent_of_value(&value))
 }
 
 /// Injected wrappers that aren't a real prompt: the slash-command family
@@ -183,11 +180,14 @@ mod tests {
     }
 
     #[test]
-    fn detect_distinguishes_codex_from_claude() {
+    fn detect_distinguishes_the_agents() {
         let codex = r#"{"type":"session_meta","payload":{}}"#;
         let claude = r#"{"type":"user","message":{"role":"user","content":"hi"}}"#;
+        // Cursor message lines have a top-level `role` and no `type`.
+        let cursor = r#"{"role":"user","message":{"content":[{"type":"text","text":"hi"}]}}"#;
         assert_eq!(detect(codex), Agent::Codex);
         assert_eq!(detect(claude), Agent::Claude);
+        assert_eq!(detect(cursor), Agent::Cursor);
     }
 
     #[test]

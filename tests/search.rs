@@ -310,6 +310,10 @@ fn agent_filter_cycles_and_composes_with_text_filter() {
     assert_eq!(app.filtered().len(), 1);
     app.search_cancel();
 
+    app.cycle_agent_filter(); // -> Cursor (none present here)
+    assert_eq!(app.agent_filter(), Some(Agent::Cursor));
+    assert_eq!(app.filtered().len(), 0);
+
     app.cycle_agent_filter(); // -> all
     assert_eq!(app.agent_filter(), None);
     assert_eq!(app.filtered().len(), 3);
