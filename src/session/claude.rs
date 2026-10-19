@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::content::first_block_text;
-use super::discovery::{Agent, PreviewPicker, SessionEntry, decode_project_dir, session_id_from_stem};
+use super::discovery::{
+    Agent, PreviewPicker, SessionEntry, decode_project_dir, session_id_from_stem,
+};
 use super::model::{Block, ParseStats, Record, RecordKind, Session, ToolResultContent, fold_lines};
 
 /// Claude's session directory: `CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`.

@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::content::first_block_text;
-use super::discovery::{Agent, PreviewPicker, SessionEntry, decode_project_dir, session_id_from_stem};
+use super::discovery::{
+    Agent, PreviewPicker, SessionEntry, decode_project_dir, session_id_from_stem,
+};
 use super::model::{Block, ParseStats, Record, RecordKind, Session, fold_lines};
 
 /// Cursor's agent-transcript root: `~/.cursor/projects`.
