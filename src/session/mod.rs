@@ -3,6 +3,7 @@
 
 pub mod claude;
 pub mod codex;
+mod content;
 pub mod cursor;
 pub mod discovery;
 pub mod model;

@@ -85,6 +85,20 @@ pub fn discover_dir(root: &Path) -> Vec<SessionEntry> {
     entries
 }
 
+/// Fallback when a session has no `cwd`: undo the dir-name encoding (`-` to `/`).
+pub(crate) fn decode_project_dir(dir: &Path) -> String {
+    let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    name.replace('-', "/")
+}
+
+/// Session id from the file name (the id when the file is not named otherwise).
+pub(crate) fn session_id_from_stem(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// Recursively collect `*.jsonl` files under `dir`. Unreadable dirs are skipped.
 pub(crate) fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else {
@@ -160,6 +174,42 @@ pub(crate) fn is_command_or_meta(text: &str) -> bool {
         || t.starts_with("[Request interrupted")
         || t.starts_with("<ide_opened_file")
         || t.starts_with("<ide_selection")
+}
+
+/// Chooses a session's preview from its user utterances (offered in file order):
+/// the first real prompt, else the first non-empty raw utterance — never inventing
+/// text. Per-format extraction of each utterance stays in each agent.
+#[derive(Default)]
+pub(crate) struct PreviewPicker {
+    summary: Option<String>,
+    raw_user: Option<String>,
+}
+
+impl PreviewPicker {
+    /// Returns true once a real prompt is found, so a preview-only scan can stop.
+    pub(crate) fn offer(&mut self, text: String) -> bool {
+        if self.summary.is_some() {
+            return true;
+        }
+        if is_command_or_meta(&text) {
+            if self.raw_user.is_none() && !text.trim().is_empty() {
+                self.raw_user = Some(text);
+            }
+            false
+        } else {
+            self.summary = Some(text);
+            true
+        }
+    }
+
+    /// A caller may still scan on for other metadata (e.g. `cwd`) after this is true.
+    pub(crate) fn has_summary(&self) -> bool {
+        self.summary.is_some()
+    }
+
+    pub(crate) fn finish(self) -> String {
+        self.summary.or(self.raw_user).unwrap_or_default()
+    }
 }
 
 #[cfg(test)]

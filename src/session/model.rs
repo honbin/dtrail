@@ -81,6 +81,37 @@ impl ToolResultContent {
     }
 }
 
+/// Shared line scan for every agent's `parse`: skip blank lines, count totals,
+/// decode each line as JSON (counting failures), and hand the value to `f`.
+/// Agent-specific interpretation (records, session id, timestamp) stays in `f`.
+pub(crate) fn fold_lines(
+    input: &str,
+    mut f: impl FnMut(&mut Session, &Value),
+) -> (Session, ParseStats) {
+    let mut session = Session::default();
+    let mut stats = ParseStats::default();
+
+    for line in input.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        stats.total_lines += 1;
+
+        let value: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => {
+                stats.skipped_lines += 1;
+                continue;
+            }
+        };
+
+        f(&mut session, &value);
+    }
+
+    (session, stats)
+}
+
 impl Session {
     /// First record timestamp (ISO8601, as recorded), if any.
     pub fn first_timestamp(&self) -> Option<&str> {

@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::discovery::{Agent, SessionEntry, is_command_or_meta};
-use super::model::{Block, ParseStats, Record, RecordKind, Session, ToolResultContent};
+use super::discovery::{Agent, PreviewPicker, SessionEntry, session_id_from_stem};
+use super::model::{Block, ParseStats, Record, RecordKind, Session, ToolResultContent, fold_lines};
 
 /// Codex's session directory: `CODEX_HOME/sessions`, else `~/.codex/sessions`.
 fn base_dir() -> PathBuf {
@@ -48,11 +48,8 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
     let reader = BufReader::new(fs::File::open(path).ok()?);
 
     let mut project: Option<String> = None;
-    let mut summary: Option<String> = None;
     let mut session_id: Option<String> = None;
-    // If there is no real prompt, fall back to the first user utterance as-is
-    // (e.g. a slash-command wrapper) — a recorded fact, not an invented summary.
-    let mut raw_user: Option<String> = None;
+    let mut preview = PreviewPicker::default();
 
     for line in reader.lines().map_while(Result::ok) {
         let line = line.trim();
@@ -78,35 +75,23 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
                         .map(str::to_string);
                 }
             }
-            Some("response_item") if summary.is_none() => {
+            Some("response_item") if !preview.has_summary() => {
                 let payload = value.get("payload");
                 let is_message =
                     payload.and_then(|p| p.get("type")).and_then(Value::as_str) == Some("message");
                 let role = payload.and_then(|p| p.get("role")).and_then(Value::as_str);
                 if is_message && role == Some("user") && !is_injected_context(payload.unwrap()) {
-                    let text = message_text(payload.unwrap());
-                    if is_command_or_meta(&text) {
-                        if raw_user.is_none() && !text.trim().is_empty() {
-                            raw_user = Some(text);
-                        }
-                    } else {
-                        summary = Some(text);
-                    }
+                    preview.offer(message_text(payload.unwrap()));
                 }
             }
             _ => {}
         }
-        if project.is_some() && summary.is_some() {
+        if project.is_some() && preview.has_summary() {
             break;
         }
     }
 
-    let session_id = session_id.unwrap_or_else(|| {
-        path.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default()
-            .to_string()
-    });
+    let session_id = session_id.unwrap_or_else(|| session_id_from_stem(path));
 
     Some(SessionEntry {
         agent: Agent::Codex,
@@ -114,30 +99,13 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
         session_id,
         project: project.unwrap_or_default(),
         modified,
-        summary: summary.or(raw_user).unwrap_or_default(),
+        summary: preview.finish(),
     })
 }
 
 /// Parse each line independently; a line that fails to parse is skipped.
 pub fn parse(input: &str) -> (Session, ParseStats) {
-    let mut session = Session::default();
-    let mut stats = ParseStats::default();
-
-    for line in input.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        stats.total_lines += 1;
-
-        let value: Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => {
-                stats.skipped_lines += 1;
-                continue;
-            }
-        };
-
+    fold_lines(input, |session, value| {
         let record_type = value.get("type").and_then(Value::as_str).unwrap_or("");
         if record_type == "session_meta" && session.session_id.is_none() {
             session.session_id = value
@@ -148,10 +116,10 @@ pub fn parse(input: &str) -> (Session, ParseStats) {
         }
         // Only response_item carries the conversation; other records are UI/meta.
         if record_type != "response_item" {
-            continue;
+            return;
         }
         let Some(payload) = value.get("payload") else {
-            continue;
+            return;
         };
         let timestamp = value
             .get("timestamp")
@@ -166,9 +134,7 @@ pub fn parse(input: &str) -> (Session, ParseStats) {
                 kind,
             });
         }
-    }
-
-    (session, stats)
+    })
 }
 
 fn record_kind(payload: &Value) -> Option<RecordKind> {
