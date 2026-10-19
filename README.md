@@ -38,8 +38,8 @@ dtrail path/to/dir
 dtrail path/to/session.jsonl
 ```
 
-With no argument, sessions are discovered from both agents and merged, newest
-first:
+With no argument, sessions are discovered from all supported agents and merged,
+newest first:
 
 - Claude Code: `$CLAUDE_CONFIG_DIR/projects` if set, else `~/.claude/projects`.
 - Codex: `$CODEX_HOME/sessions` if set, else `~/.codex/sessions`.
@@ -94,18 +94,10 @@ scroll it with the list still visible; `Enter` dives in and reads full-width.
 `Ctrl-l` forces a full redraw from any screen. Yank copies via OSC 52, so it
 works over SSH on terminals that support it (tmux needs `set-clipboard on`).
 
-Opening a session from a filtered list carries the query into the conversation
-as a body search, jumping to the first occurrence so `n`/`N` step through it.
-Search covers the whole session — messages, tool input/output, and thinking —
-and a hit inside a folded item reveals just that item. The conversation's
-status line shows the session's start time (as recorded, UTC). An active search
-or filter shows on its own line below it.
-
-While editing a query, `Up`/`Down` (or `Ctrl-p`/`Ctrl-n`) move the selection
-(list) or jump between matches (conversation), `Esc` cancels, and `Enter`
-commits — opening the highlighted session in the list, or keeping the current
-match in a conversation. On terminals narrower than 90 columns only the
-focused pane is shown.
+Opening a session from a filtered list carries the query into a body search;
+`n`/`N` step through matches. Search covers the entire session — messages, tool
+input/output, and thinking — and reveals a folded item containing a match. On
+terminals narrower than 90 columns, only the focused pane is shown.
 
 ## Privacy
 
