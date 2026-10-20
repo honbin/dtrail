@@ -243,8 +243,16 @@ impl PreviewPicker {
         self.summary.is_some()
     }
 
+    /// The preview is shown and filtered as one line, so line breaks become
+    /// spaces here rather than vanishing as control characters on display.
     pub(crate) fn finish(self) -> String {
-        self.summary.or(self.raw_user).unwrap_or_default()
+        self.summary
+            .or(self.raw_user)
+            .unwrap_or_default()
+            .split(['\r', '\n'])
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -288,6 +296,13 @@ mod tests {
         assert!(!is_command_or_meta("<T> in generics?"));
         assert!(!is_command_or_meta("<my_var means what"));
         assert!(!is_command_or_meta("<-- is this an arrow"));
+    }
+
+    #[test]
+    fn a_multi_line_prompt_becomes_one_spaced_line() {
+        let mut picker = PreviewPicker::default();
+        picker.offer("fix the\r\nparser\n\nplease".to_string());
+        assert_eq!(picker.finish(), "fix the parser please");
     }
 
     #[test]
