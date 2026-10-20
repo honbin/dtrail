@@ -60,16 +60,16 @@ Cursor's `<user_query>`, which holds the prompt itself).
 
 ## Keys
 
-Browsing and reading are distinct: the list pane keeps the list and body
-side by side so you can compare sessions. `l` / `Tab` moves into the body to
-scroll it with the list still visible; `Enter` dives in and reads full-width.
-`z` overrides the layout manually, independent of diving.
+Browsing and reading are distinct: the list pane keeps the list and
+conversation side by side so you can compare sessions. `l` / `Tab` moves into
+the conversation to scroll it with the list still visible; `Enter` dives in and
+reads full-width. `z` overrides the layout manually, independent of diving.
 
 ### List pane
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` | Move down / up (the body follows) |
+| `j` / `k` | Move down / up (the conversation follows) |
 | `Ctrl-d` / `Ctrl-u` | Half page down / up |
 | `Ctrl-f` / `Ctrl-b` | Full page down / up |
 | `Space` | Page down |
@@ -77,7 +77,7 @@ scroll it with the list still visible; `Enter` dives in and reads full-width.
 | `a` | Cycle the agent filter: all → Claude → Codex → Cursor |
 | `p` | Toggle hiding sessions with empty or command-only previews |
 | `/` | Filter by project or preview text |
-| `l` / `→` / `Tab` | Move into the body, keeping the split (scroll with `j`/`k`) |
+| `l` / `→` / `Tab` | Move into the conversation, keeping the split (scroll with `j`/`k`) |
 | `Enter` | Dive into the session and read it full-width |
 | `z` | Toggle full-width / split (zoom) |
 | `q` | Quit |
@@ -103,7 +103,7 @@ scroll it with the list still visible; `Enter` dives in and reads full-width.
 `Ctrl-l` forces a full redraw from any screen. Yank copies via OSC 52, so it
 works over SSH on terminals that support it (tmux needs `set-clipboard on`).
 
-Opening a session from a filtered list carries the query into a body search;
+Opening a session from a filtered list carries the query into a conversation search;
 `n`/`N` step through matches. Search covers the entire session — messages, tool
 input/output, and thinking — and reveals a folded item containing a match. On
 terminals narrower than 90 columns, only the focused pane is shown.
