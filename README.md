@@ -52,7 +52,9 @@ missing path is reported as an error rather than falling back to discovery.
 
 Content of a kind dtrail doesn't recognize (e.g. images, or new item types an
 agent adds) is shown as an `[unknown block: <type>]` placeholder rather than
-dropped, and lines that fail to parse are counted in the status line.
+dropped (a run of the same type shares one row with a count), and lines that
+fail to parse are counted in the status line. Multi-line system text, such as
+injected instructions, starts folded.
 
 ## Keys
 

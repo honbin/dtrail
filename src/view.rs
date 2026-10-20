@@ -51,14 +51,16 @@ impl Fold<'_> {
 
 /// Flatten a session into display rows wrapped to `width`.
 ///
-/// Foldable items (tool input, tool output, thinking) are numbered in flatten
-/// order; an item's body rows are emitted only when `fold` expands that id.
+/// Foldable items (tool input, tool output, thinking, multi-line system text)
+/// are numbered in flatten order; an item's body rows are emitted only when
+/// `fold` expands that id.
 pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
     let width = width.max(1) as usize;
     let mut b = Builder {
         logical: Vec::new(),
         fold,
         next_fold_id: 0,
+        unknown_run: None,
     };
 
     for record in &session.records {
@@ -100,8 +102,10 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
                     }
                 }
             }
-            RecordKind::System { text, .. } => {
-                if !text.is_empty() {
+            RecordKind::System { subtype, text } => {
+                if system_folds(text) {
+                    b.system(subtype.as_deref(), text);
+                } else if !text.is_empty() {
                     b.text(Role::System, text);
                 }
             }
@@ -110,6 +114,13 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
     }
 
     wrap_rows(b.logical, width)
+}
+
+/// Long system text (e.g. Codex's developer instructions) can bury the
+/// conversation; folding by shape rather than by tag keeps this agent-agnostic,
+/// and one-liners such as Claude's status notices stay inline.
+fn system_folds(text: &str) -> bool {
+    text.contains('\n')
 }
 
 /// Searchable text of each foldable item, in the same order [`build_rows`]
@@ -137,6 +148,7 @@ pub fn fold_item_texts(session: &Session) -> Vec<String> {
                     }
                 }
             }
+            RecordKind::System { text, .. } if system_folds(text) => out.push(text.clone()),
             _ => {}
         }
     }
@@ -147,6 +159,8 @@ struct Builder<'a> {
     logical: Vec<Row>,
     fold: Fold<'a>,
     next_fold_id: usize,
+    /// Row index, block type and count of the trailing unknown placeholder.
+    unknown_run: Option<(usize, String, usize)>,
 }
 
 impl Builder<'_> {
@@ -207,8 +221,35 @@ impl Builder<'_> {
         });
     }
 
+    /// Consecutive placeholders of one type share a counted row: Codex can log
+    /// a long run of the same unknown item, which would otherwise fill a screen.
     fn unknown(&mut self, block_type: &str) {
-        self.plain(Role::System, &format!("[unknown block: {block_type}]"));
+        let label = format!("[unknown block: {block_type}]");
+        if let Some((idx, kind, count)) = &mut self.unknown_run
+            && *idx + 1 == self.logical.len()
+            && kind == block_type
+        {
+            *count += 1;
+            self.logical[*idx].text = format!("{label} ×{count}");
+            return;
+        }
+        self.unknown_run = Some((self.logical.len(), block_type.to_string(), 1));
+        self.plain(Role::System, &label);
+    }
+
+    fn system(&mut self, subtype: Option<&str>, text: &str) {
+        let (id, expanded) = self.next_fold();
+        let line_count = text.lines().count();
+        let name = subtype.unwrap_or("system");
+        self.header(
+            Role::System,
+            id,
+            expanded,
+            &format!("{name} [{line_count} lines]"),
+        );
+        if expanded {
+            self.body(Role::System, id, text);
+        }
     }
 
     fn tool_use(&mut self, name: &str, input: &serde_json::Value) {
@@ -352,6 +393,59 @@ mod tests {
         // Same count, and ids are exactly 0..len (no drift between the two).
         assert_eq!(ids.len(), texts.len());
         assert!(ids.into_iter().eq(0..texts.len()));
+    }
+
+    fn codex_rows(jsonl: &str, fold: Fold) -> Vec<String> {
+        let (session, _) = crate::session::codex::parse(jsonl);
+        build_rows(&session, fold, 80)
+            .into_iter()
+            .map(|r| r.text)
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn multi_line_system_text_starts_folded() {
+        let jsonl = concat!(
+            r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<instructions>\nbe terse\n</instructions>"}]}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"one line"}]}}"#,
+            "\n",
+        );
+        assert_eq!(
+            codex_rows(jsonl, Fold::Ids(&HashSet::new())),
+            vec!["▸ developer [3 lines]", "one line"]
+        );
+        assert_eq!(
+            codex_rows(jsonl, Fold::All),
+            vec![
+                "▾ developer [3 lines]",
+                "<instructions>",
+                "be terse",
+                "</instructions>",
+                "one line",
+            ]
+        );
+
+        let (session, _) = crate::session::codex::parse(jsonl);
+        assert_eq!(
+            fold_item_texts(&session),
+            vec!["<instructions>\nbe terse\n</instructions>"]
+        );
+    }
+
+    #[test]
+    fn a_run_of_one_unknown_type_shares_a_counted_row() {
+        let item = |t: &str| format!(r#"{{"type":"response_item","payload":{{"type":"{t}"}}}}"#);
+        let jsonl = [item("x"), item("x"), item("x"), item("y"), item("x")].join("\n");
+        assert_eq!(
+            codex_rows(&jsonl, Fold::All),
+            vec![
+                "[unknown block: x] ×3",
+                "[unknown block: y]",
+                "[unknown block: x]",
+            ]
+        );
     }
 
     #[test]
