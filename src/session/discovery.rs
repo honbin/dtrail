@@ -184,28 +184,32 @@ fn agent_of_file(path: &Path) -> Option<Agent> {
         .find_map(|value| agent_of_value(&value))
 }
 
-/// Injected wrappers that aren't a real prompt: the slash-command family
-/// (`<command-name>`, `<command-message>`, `<command-args>`), local command
-/// output (`<local-command-stdout>`, `<local-command-stderr>`), interrupt
-/// markers, Claude Code's IDE context turns (`<ide_opened_file>`,
-/// `<ide_selection>`), and Codex's injected context (`<environment_context>`,
-/// `<user_instructions>`). Matched by their specific tag prefixes, not a bare `<`, so
-/// a genuine prompt that happens to start with `<` (e.g. "<div> isn't working") is
-/// not mistaken for metadata.
+/// Injected wrappers that aren't a real prompt: blank text, interrupt markers,
+/// and anything opening with a harness-style tag such as `<command-name>`,
+/// `<ide_selection>` or `<environment_context>`. Harness tags tend to be snake/kebab
+/// case while HTML a user might paste ("<div> isn't working") is not, so
+/// the shape tells them apart without tracking each agent's tag names.
 ///
 /// This is a text heuristic for Claude and for Codex logs that predate the
 /// per-turn origin metadata; current Codex logs are classified structurally
 /// (see `codex::scan`).
 pub(crate) fn is_command_or_meta(text: &str) -> bool {
     let t = text.trim_start();
-    t.is_empty()
-        || t.starts_with("<command-")
-        || t.starts_with("<local-command-")
-        || t.starts_with("[Request interrupted")
-        || t.starts_with("<ide_opened_file")
-        || t.starts_with("<ide_selection")
-        || t.starts_with("<environment_context")
-        || t.starts_with("<user_instructions")
+    t.is_empty() || t.starts_with("[Request interrupted") || opens_with_harness_tag(t)
+}
+
+fn opens_with_harness_tag(t: &str) -> bool {
+    let Some(rest) = t.strip_prefix('<') else {
+        return false;
+    };
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(end);
+    name.starts_with(|c: char| c.is_ascii_alphabetic())
+        && name.contains(['_', '-'])
+        && after.starts_with(|c: char| c == '>' || c == '/' || c.is_whitespace())
+        && after.contains('>')
 }
 
 /// Chooses a session's preview from its user utterances (offered in file order):
@@ -273,9 +277,17 @@ mod tests {
         assert!(is_command_or_meta(
             "<user_instructions>be terse</user_instructions>"
         ));
+        // Tags the shape covers without being listed anywhere.
+        assert!(is_command_or_meta(
+            "<multi_agent_mode>be careful</multi_agent_mode> now fix it"
+        ));
+        assert!(is_command_or_meta("<skills_instructions>\n- a\n"));
         assert!(!is_command_or_meta("最適化できますか？"));
         // A real prompt that merely starts with `<` must not be treated as meta.
         assert!(!is_command_or_meta("<div> isn't working"));
+        assert!(!is_command_or_meta("<T> in generics?"));
+        assert!(!is_command_or_meta("<my_var means what"));
+        assert!(!is_command_or_meta("<-- is this an arrow"));
     }
 
     #[test]
