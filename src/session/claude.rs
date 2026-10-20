@@ -85,7 +85,7 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         {
             project = Some(cwd.to_string());
         }
-        if let Some(text) = user_text(&value) {
+        if let Some(text) = preview_text(&value) {
             preview.offer(text);
         }
         if project.is_some() && preview.has_summary() {
@@ -103,7 +103,7 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
     })
 }
 
-fn user_text(value: &Value) -> Option<String> {
+fn preview_text(value: &Value) -> Option<String> {
     if value.get("type").and_then(Value::as_str) != Some("user") {
         return None;
     }

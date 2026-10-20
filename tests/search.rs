@@ -83,7 +83,7 @@ fn jumping_to_a_match_keeps_context_around_it() {
 }
 
 #[test]
-fn carried_query_jumps_to_the_first_body_match() {
+fn carried_query_jumps_to_the_first_conversation_match() {
     let jsonl = concat!(
         r#"{"type":"user","sessionId":"s","message":{"role":"user","content":"debug the timeout please"}}"#,
         "\n",
@@ -144,6 +144,38 @@ fn search_reveals_a_match_inside_a_folded_tool_result() {
     assert!(view.total_rows() > 2);
     let row = &view.visible_rows()[view.cursor() - view.offset()];
     assert!(row.text.to_lowercase().contains("nullpointer"));
+}
+
+#[test]
+fn search_reveals_a_match_inside_a_folded_tag_region() {
+    let jsonl = r#"{"type":"user","sessionId":"s","message":{"content":"<ctx>\nline one\nNeedleInContext\n</ctx>\nplain prompt"}}"#;
+    let (session, _) = claude::parse(jsonl);
+    let mut view = ConversationView::new(session);
+    view.sync_viewport(80, 20);
+
+    // Folded: the user header, the region header, and the plain prompt.
+    assert_eq!(view.total_rows(), 3);
+
+    view.set_search("needleincontext");
+    assert_eq!(view.match_info(), Some((1, 1)));
+    assert!(view.total_rows() > 3);
+    let row = &view.visible_rows()[view.cursor() - view.offset()];
+    assert!(row.text.contains("NeedleInContext"));
+}
+
+#[test]
+fn search_reveals_a_match_inside_folded_system_text() {
+    let jsonl =
+        r#"{"type":"system","sessionId":"s","subtype":"note","content":"intro\nNeedleInSystem"}"#;
+    let (session, _) = claude::parse(jsonl);
+    let mut view = ConversationView::new(session);
+    view.sync_viewport(80, 20);
+    assert_eq!(view.total_rows(), 1);
+
+    view.set_search("needleinsystem");
+    assert_eq!(view.match_info(), Some((1, 1)));
+    let row = &view.visible_rows()[view.cursor() - view.offset()];
+    assert!(row.text.contains("NeedleInSystem"));
 }
 
 #[test]

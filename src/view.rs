@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 
 use crate::session::cursor::USER_QUERY_TAG;
+use crate::session::discovery::split_tag_name;
 use crate::session::{Block, RecordKind, Session, ToolResultContent};
 use crate::text::{sanitize_display, wrap_line};
 
@@ -117,6 +118,12 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
     wrap_rows(b.logical, width)
 }
 
+/// Rows [`Builder::body`] emits for `text`, so a header's line count matches
+/// what unfolding shows, trailing newline included.
+fn row_count(text: &str) -> usize {
+    text.split('\n').count()
+}
+
 /// Long system text (e.g. Codex's developer instructions) can bury the
 /// conversation; folding by shape rather than by tag keeps this agent-agnostic,
 /// and one-liners such as Claude's status notices stay inline.
@@ -166,11 +173,8 @@ fn open_tag(line: &str) -> Option<&str> {
     if inner.contains(['<', '>']) || inner.ends_with('/') {
         return None;
     }
-    let name = inner.split_whitespace().next()?;
-    let mut chars = name.chars();
-    let valid = chars.next()?.is_ascii_alphabetic()
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.'));
-    valid.then_some(name)
+    let (name, after) = split_tag_name(inner)?;
+    (after.is_empty() || after.starts_with(char::is_whitespace)).then_some(name)
 }
 
 /// Index of the `</name>` line closing the tag opened at `open`, with at least
@@ -279,15 +283,15 @@ impl Builder<'_> {
                 self.plain(Role::UserText, line);
             }
             let (id, expanded) = self.next_fold();
-            let count = r.end - r.start + 1;
+            let region = lines[r.start..=r.end].join("\n");
             self.header(
                 Role::UserText,
                 id,
                 expanded,
-                &format!("<{}> [{count} lines]", r.name),
+                &format!("<{}> [{} lines]", r.name, row_count(&region)),
             );
             if expanded {
-                self.body(Role::UserText, id, &lines[r.start..=r.end].join("\n"));
+                self.body(Role::UserText, id, &region);
             }
             next = r.end + 1;
         }
@@ -342,7 +346,7 @@ impl Builder<'_> {
 
     fn system(&mut self, subtype: Option<&str>, text: &str) {
         let (id, expanded) = self.next_fold();
-        let line_count = text.lines().count();
+        let line_count = row_count(text);
         let name = subtype.unwrap_or("system");
         self.header(
             Role::System,
@@ -372,10 +376,8 @@ impl Builder<'_> {
     fn tool_result(&mut self, _tool_use_id: &str, content: &ToolResultContent, is_error: bool) {
         let (id, expanded) = self.next_fold();
         let body = content.as_display_string();
-        let line_count = body
-            .lines()
-            .count()
-            .max(if body.is_empty() { 0 } else { 1 });
+        // An empty result shows no body when unfolded.
+        let line_count = if body.is_empty() { 0 } else { row_count(&body) };
         let tag = if is_error { "error" } else { "result" };
         self.header(
             Role::ToolHeader,
@@ -390,7 +392,7 @@ impl Builder<'_> {
 
     fn thinking(&mut self, text: &str) {
         let (id, expanded) = self.next_fold();
-        let line_count = text.lines().count().max(1);
+        let line_count = row_count(text);
         self.header(
             Role::Thinking,
             id,
@@ -498,13 +500,17 @@ mod tests {
         assert!(ids.into_iter().eq(0..texts.len()));
     }
 
-    fn codex_rows(jsonl: &str, fold: Fold) -> Vec<String> {
-        let (session, _) = crate::session::codex::parse(jsonl);
-        build_rows(&session, fold, 80)
+    /// Non-blank row texts, the shape every row assertion here compares.
+    fn row_texts(session: &Session, fold: Fold) -> Vec<String> {
+        build_rows(session, fold, 80)
             .into_iter()
             .map(|r| r.text)
             .filter(|t| !t.is_empty())
             .collect()
+    }
+
+    fn codex_rows(jsonl: &str, fold: Fold) -> Vec<String> {
+        row_texts(&crate::session::codex::parse(jsonl).0, fold)
     }
 
     #[test]
@@ -553,11 +559,7 @@ mod tests {
 
     fn user_text_rows(text: &str, fold: Fold) -> Vec<String> {
         let line = serde_json::json!({"type": "user", "message": {"content": text}}).to_string();
-        let (session, _) = crate::session::claude::parse(&line);
-        build_rows(&session, fold, 80)
-            .into_iter()
-            .map(|r| r.text)
-            .collect()
+        row_texts(&crate::session::claude::parse(&line).0, fold)
     }
 
     #[test]
@@ -590,6 +592,8 @@ mod tests {
             "<a>\n</a>",
             "<br/>\nx\n</br>",
             "</a>\nx\n</a>",
+            // Same name rule as the preview's harness-tag check.
+            "<ns:a>\nx\n</ns:a>",
         ] {
             let rows = user_text_rows(text, Fold::Ids(&HashSet::new()));
             assert!(
@@ -608,10 +612,7 @@ mod tests {
         })
         .to_string();
         let (session, _) = crate::session::cursor::parse(&line);
-        let rows: Vec<String> = build_rows(&session, Fold::Ids(&HashSet::new()), 80)
-            .into_iter()
-            .map(|r| r.text)
-            .collect();
+        let rows = row_texts(&session, Fold::Ids(&HashSet::new()));
         assert_eq!(
             rows,
             vec![
@@ -652,6 +653,58 @@ mod tests {
     }
 
     #[test]
+    fn every_fold_kind_aligns_with_fold_item_texts() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<ctx>\nx\n</ctx>\nhello"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"out"}]}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"note","content":"a\nb"}"#,
+            "\n",
+        );
+        let (session, _) = crate::session::claude::parse(jsonl);
+        let texts = fold_item_texts(&session);
+        assert_eq!(texts.len(), 5);
+        assert_eq!(texts[0], "<ctx>\nx\n</ctx>");
+        assert_eq!(texts[1], "hmm");
+        assert!(texts[2].starts_with("Bash "));
+        assert_eq!(texts[3], "out");
+        assert_eq!(texts[4], "a\nb");
+        let ids: std::collections::BTreeSet<usize> = build_rows(&session, Fold::All, 100)
+            .iter()
+            .filter_map(|r| r.fold)
+            .collect();
+        assert!(ids.into_iter().eq(0..texts.len()));
+    }
+
+    #[test]
+    fn a_turn_header_ends_an_unknown_run() {
+        let jsonl = concat!(
+            r#"{"type":"assistant","message":{"content":[{"type":"x"}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":[{"type":"x"}]}}"#,
+            "\n",
+        );
+        let (session, _) = crate::session::claude::parse(jsonl);
+        assert_eq!(
+            row_texts(&session, Fold::All),
+            vec!["[unknown block: x]", "● user", "[unknown block: x]"]
+        );
+    }
+
+    #[test]
+    fn a_header_counts_the_rows_unfolding_shows() {
+        let line =
+            r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"a\n"}]}}"#;
+        let (session, _) = crate::session::claude::parse(line);
+        let rows = build_rows(&session, Fold::All, 80);
+        assert_eq!(rows[0].text, "▾ thinking [2 lines]");
+        assert_eq!(rows.len() - 1, 2);
+    }
+
+    #[test]
     fn a_string_tool_input_keeps_its_line_breaks() {
         let input = serde_json::Value::String("*** Begin Patch\n*** End Patch".to_string());
         assert_eq!(tool_input_text(&input), "*** Begin Patch\n*** End Patch");
@@ -671,12 +724,7 @@ mod tests {
             r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"before"}}]}}}}
 {{"type":"user","message":{{"content":{content}}}}}"#
         );
-        let (session, _) = crate::session::claude::parse(&jsonl);
-        build_rows(&session, Fold::All, 80)
-            .into_iter()
-            .map(|r| r.text)
-            .filter(|t| !t.is_empty())
-            .collect()
+        row_texts(&crate::session::claude::parse(&jsonl).0, Fold::All)
     }
 
     #[test]

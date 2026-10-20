@@ -199,17 +199,24 @@ pub(crate) fn is_command_or_meta(text: &str) -> bool {
 }
 
 fn opens_with_harness_tag(t: &str) -> bool {
-    let Some(rest) = t.strip_prefix('<') else {
+    let Some((name, after)) = t.strip_prefix('<').and_then(split_tag_name) else {
         return false;
     };
-    let end = rest
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        .unwrap_or(rest.len());
-    let (name, after) = rest.split_at(end);
-    name.starts_with(|c: char| c.is_ascii_alphabetic())
-        && name.contains(['_', '-'])
+    name.contains(['_', '-'])
         && after.starts_with(|c: char| c == '>' || c == '/' || c.is_whitespace())
         && after.contains('>')
+}
+
+/// Split a leading tag name (a letter, then letters, digits, `_` or `-`) from
+/// the rest. Shared with the conversation's tag folding so both agree on what
+/// a tag name is.
+pub(crate) fn split_tag_name(s: &str) -> Option<(&str, &str)> {
+    let end = s
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(s.len());
+    let (name, after) = s.split_at(end);
+    name.starts_with(|c: char| c.is_ascii_alphabetic())
+        .then_some((name, after))
 }
 
 /// Chooses a session's preview from its user utterances (offered in file order):

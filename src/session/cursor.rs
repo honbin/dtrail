@@ -91,7 +91,7 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         if value.get("role").and_then(Value::as_str) != Some("user") {
             continue;
         }
-        let Some(text) = user_text(&value) else {
+        let Some(text) = preview_text(&value) else {
             continue;
         };
         if preview.offer(text) {
@@ -113,7 +113,7 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
 /// from Cursor's `<user_query>…</user_query>`. That block also carries injected
 /// context (timestamps, git diff, attached files); the query is what the user
 /// actually typed, so the preview drops the rest.
-fn user_text(value: &Value) -> Option<String> {
+fn preview_text(value: &Value) -> Option<String> {
     let text = first_block_text(value.get("message")?.get("content")?)?;
     Some(user_query(&text).unwrap_or(text))
 }
