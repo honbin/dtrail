@@ -17,10 +17,10 @@ Requires a Rust toolchain.
 
 ```sh
 # Install the `dtrail` command straight from GitHub
-cargo install --git https://github.com/honbin/dtrail
+cargo install --git https://github.com/honbin/dtrail --locked
 
 # Or, from a local clone:
-cargo install --path .
+cargo install --locked --path .
 ```
 
 ## Usage
