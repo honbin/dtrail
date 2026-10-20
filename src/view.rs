@@ -66,15 +66,15 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
             RecordKind::User(blocks) => {
                 let mut pushed_header = false;
                 for block in blocks {
+                    // Tool results belong to the assistant's turn; any other
+                    // block opens the user's, whatever its kind.
+                    if !pushed_header && !matches!(block, Block::ToolResult { .. }) {
+                        b.turn_gap();
+                        b.plain(Role::UserHeader, "● user");
+                        pushed_header = true;
+                    }
                     match block {
-                        Block::Text(text) => {
-                            if !pushed_header {
-                                b.turn_gap();
-                                b.plain(Role::UserHeader, "● user");
-                                pushed_header = true;
-                            }
-                            b.text(Role::UserText, text);
-                        }
+                        Block::Text(text) => b.text(Role::UserText, text),
                         Block::ToolResult {
                             tool_use_id,
                             content,
@@ -367,11 +367,52 @@ mod tests {
         assert_eq!(summarize_input(&input), "bash -lc ls");
     }
 
+    /// Texts of the rows for one user message with `content`, after an
+    /// assistant turn so a misplaced placeholder would land in that turn.
+    fn user_message_rows(content: &str) -> Vec<String> {
+        let jsonl = format!(
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"before"}}]}}}}
+{{"type":"user","message":{{"content":{content}}}}}"#
+        );
+        let (session, _) = crate::session::claude::parse(&jsonl);
+        build_rows(&session, Fold::All, 80)
+            .into_iter()
+            .map(|r| r.text)
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
     #[test]
-    fn an_unknown_user_block_leaves_a_placeholder() {
-        let jsonl = r#"{"type":"user","message":{"content":[{"type":"text","text":"see"},{"type":"image","source":{}}]}}"#;
-        let (session, _) = crate::session::claude::parse(jsonl);
-        let rows = build_rows(&session, Fold::All, 80);
-        assert!(rows.iter().any(|r| r.text == "[unknown block: image]"));
+    fn an_unknown_user_block_sits_under_the_user_header_in_any_order() {
+        let text = r#"{"type":"text","text":"see"}"#;
+        let image = r#"{"type":"image","source":{}}"#;
+        for (content, expected) in [
+            (
+                format!("[{text},{image}]"),
+                vec![
+                    "◆ assistant",
+                    "before",
+                    "● user",
+                    "see",
+                    "[unknown block: image]",
+                ],
+            ),
+            (
+                format!("[{image},{text}]"),
+                vec![
+                    "◆ assistant",
+                    "before",
+                    "● user",
+                    "[unknown block: image]",
+                    "see",
+                ],
+            ),
+            (
+                format!("[{image}]"),
+                vec!["◆ assistant", "before", "● user", "[unknown block: image]"],
+            ),
+        ] {
+            assert_eq!(user_message_rows(&content), expected, "{content}");
+        }
     }
 }

@@ -33,6 +33,10 @@ pub struct ConversationView {
     search_query: String,
     matches: Vec<usize>,
     match_cursor: usize,
+    /// `match_cursor` names the match `n` visits next rather than the one last
+    /// visited, as after a fold moved the rows from under the cursor; `N` still
+    /// goes to the one before it.
+    match_ahead: bool,
     /// Cursor/offset captured when an incremental search began, so Esc can
     /// return there. `Some` only while a search is in progress.
     search_origin: Option<(usize, usize)>,
@@ -61,6 +65,7 @@ impl ConversationView {
             search_query: String::new(),
             matches: Vec::new(),
             match_cursor: 0,
+            match_ahead: false,
             search_origin: None,
             carried_search: None,
             visual_anchor: None,
@@ -250,12 +255,15 @@ impl ConversationView {
         // The match rows moved, so re-anchor `n`/`N` at the cursor.
         let cursor = self.scroll.cursor();
         self.match_cursor = self.matches.iter().position(|&r| r >= cursor).unwrap_or(0);
+        self.match_ahead = self.matches.get(self.match_cursor) != Some(&cursor);
     }
 
     pub fn search_query(&self) -> &str {
         &self.search_query
     }
 
+    /// `(k, total)` for the status line. `k` is the match last visited, or the
+    /// one `n` goes to next after a fold (see `match_ahead`).
     pub fn match_info(&self) -> Option<(usize, usize)> {
         if self.search_query.is_empty() {
             None
@@ -286,6 +294,7 @@ impl ConversationView {
         let origin = self.search_origin.take();
         self.search_query.clear();
         self.collapsed.clear();
+        self.match_ahead = false;
         self.rebuild(self.rows_width.max(1));
         match origin {
             Some((cursor, offset)) => self.scroll.restore(cursor, offset, self.rows.len()),
@@ -298,6 +307,7 @@ impl ConversationView {
     pub fn set_search(&mut self, query: &str) {
         self.search_query = query.to_string();
         self.collapsed.clear();
+        self.match_ahead = false;
         // Rebuild so matches inside folded items are revealed and indexed.
         self.rebuild(self.rows_width.max(1));
 
@@ -320,7 +330,9 @@ impl ConversationView {
         if self.matches.is_empty() {
             return;
         }
-        self.match_cursor = (self.match_cursor + 1) % self.matches.len();
+        if !std::mem::take(&mut self.match_ahead) {
+            self.match_cursor = (self.match_cursor + 1) % self.matches.len();
+        }
         self.move_cursor_to_match();
     }
 
@@ -328,6 +340,7 @@ impl ConversationView {
         if self.matches.is_empty() {
             return;
         }
+        self.match_ahead = false;
         self.match_cursor = (self.match_cursor + self.matches.len() - 1) % self.matches.len();
         self.move_cursor_to_match();
     }

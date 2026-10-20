@@ -341,8 +341,8 @@ fn a_search_revealed_item_can_be_folded_back() {
     assert!(view.total_rows() > folded);
 }
 
-#[test]
-fn folding_a_revealed_item_re_anchors_the_match_counter() {
+/// "needle first" (row 1), a tool result with two needles, then "needle last".
+fn fold_search_view() -> ConversationView {
     let jsonl = concat!(
         r#"{"type":"user","sessionId":"s","message":{"role":"user","content":"needle first"}}"#,
         "\n",
@@ -358,12 +358,71 @@ fn folding_a_revealed_item_re_anchors_the_match_counter() {
     view.sync_viewport(80, 30);
     view.set_search("needle");
     assert_eq!(view.match_info(), Some((1, 4)));
+    view
+}
+
+fn row_text(view: &ConversationView) -> &str {
+    &view.visible_rows()[view.cursor() - view.offset()].text
+}
+
+#[test]
+fn n_after_folding_goes_to_the_next_match_without_skipping() {
+    let mut view = fold_search_view();
     view.next_match();
     view.next_match(); // onto the second match inside the revealed result
     view.toggle_fold_under_cursor();
 
-    // Two matches remain; the counter points at the one after the folded item.
     assert_eq!(view.match_info(), Some((2, 2)));
     view.next_match();
+    assert_eq!(row_text(&view), "needle last");
+    assert_eq!(view.match_info(), Some((2, 2)));
+}
+
+#[test]
+fn shift_n_after_folding_goes_to_the_previous_match_without_skipping() {
+    let mut view = fold_search_view();
+    view.next_match();
+    view.next_match();
+    view.toggle_fold_under_cursor();
+
+    view.prev_match();
+    assert_eq!(row_text(&view), "needle first");
     assert_eq!(view.match_info(), Some((1, 2)));
+}
+
+/// Two plain matches, then a tool result with one, revealed and folded back so
+/// the cursor sits past every remaining match.
+fn folded_after_last_match_view() -> ConversationView {
+    let jsonl = concat!(
+        r#"{"type":"user","sessionId":"s","message":{"role":"user","content":"needle one"}}"#,
+        "\n",
+        r#"{"type":"assistant","sessionId":"s","message":{"content":[{"type":"text","text":"needle two"}]}}"#,
+        "\n",
+        r#"{"type":"assistant","sessionId":"s","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+        "\n",
+        r#"{"type":"user","sessionId":"s","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"a\nneedle"}]}}"#,
+        "\n",
+    );
+    let (session, _) = claude::parse(jsonl);
+    let mut view = ConversationView::new(session);
+    view.sync_viewport(80, 30);
+    view.set_search("needle");
+    view.next_match();
+    view.next_match(); // onto the match inside the revealed result
+    view.toggle_fold_under_cursor();
+    view
+}
+
+#[test]
+fn n_after_folding_past_the_last_match_wraps_to_the_first() {
+    let mut view = folded_after_last_match_view();
+    view.next_match();
+    assert_eq!(row_text(&view), "needle one");
+}
+
+#[test]
+fn shift_n_after_folding_past_the_last_match_goes_to_the_last() {
+    let mut view = folded_after_last_match_view();
+    view.prev_match();
+    assert_eq!(row_text(&view), "needle two");
 }
