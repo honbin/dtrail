@@ -41,7 +41,7 @@ pub struct ConversationView {
     /// return there. `Some` only while a search is in progress.
     search_origin: Option<(usize, usize)>,
     /// A query to apply on the next layout, carried in from the list filter so
-    /// it is applied at the real (full) width rather than the preview width.
+    /// it is applied at the real (full) width rather than the split width.
     carried_search: Option<String>,
     /// Row where a line-wise visual selection was started; the selection spans
     /// from here to the cursor. `None` outside visual mode.

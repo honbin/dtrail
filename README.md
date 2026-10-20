@@ -56,7 +56,7 @@ dropped, and lines that fail to parse are counted in the status line.
 
 ## Keys
 
-Browsing and reading are distinct: the list pane keeps the list and preview
+Browsing and reading are distinct: the list pane keeps the list and body
 side by side so you can compare sessions. `l` / `Tab` moves into the body to
 scroll it with the list still visible; `Enter` dives in and reads full-width.
 `z` overrides the layout manually, independent of diving.
@@ -65,7 +65,7 @@ scroll it with the list still visible; `Enter` dives in and reads full-width.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` | Move down / up (the preview follows) |
+| `j` / `k` | Move down / up (the body follows) |
 | `Ctrl-d` / `Ctrl-u` | Half page down / up |
 | `Ctrl-f` / `Ctrl-b` | Full page down / up |
 | `Space` | Page down |
