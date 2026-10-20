@@ -105,12 +105,23 @@ pub fn sanitize_display(s: &str) -> String {
             i += 1;
         } else if c.is_control() {
             i += 1;
+        } else if is_bidi_control(c) {
+            // Shown rather than dropped: a viewer should reveal that the log
+            // carries them, without letting them reorder what the terminal draws.
+            out.push_str(&format!("‹U+{:04X}›", c as u32));
+            i += 1;
         } else {
             out.push(c);
             i += 1;
         }
     }
     out
+}
+
+/// Explicit embedding/override (U+202A–202E) and isolate (U+2066–2069)
+/// controls. LRM/RLM (U+200E/200F) are left alone: they only mark direction.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 #[cfg(test)]
@@ -147,5 +158,21 @@ mod tests {
         assert_eq!(sanitize_display("\u{1b}[32mok\u{1b}[m done"), "ok done");
         assert_eq!(sanitize_display("a\u{7}b\tc"), "ab c");
         assert_eq!(sanitize_display("plain"), "plain");
+    }
+
+    #[test]
+    fn sanitize_display_reveals_bidi_controls() {
+        assert_eq!(sanitize_display("a\u{202E}b"), "a‹U+202E›b");
+        assert_eq!(sanitize_display("\u{2066}x\u{2069}"), "‹U+2066›x‹U+2069›");
+        // Direction marks are not reordering controls and pass through.
+        assert_eq!(sanitize_display("a\u{200F}b"), "a\u{200F}b");
+    }
+
+    #[test]
+    fn a_revealed_bidi_control_wraps_by_its_visible_width() {
+        // "ab‹U+202E›" is 10 columns, so at width 5 it splits evenly.
+        let text = sanitize_display("ab\u{202E}");
+        assert_eq!(display_width(&text), 10);
+        assert_eq!(wrap_line(&text, 5), vec!["ab‹U+", "202E›"]);
     }
 }
