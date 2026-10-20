@@ -9,12 +9,11 @@
 //! linked by `call_id`.
 
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::discovery::{Agent, PreviewPicker, SessionEntry, session_id_from_stem};
+use super::discovery::{Agent, PreviewPicker, SessionEntry, json_lines, session_id_from_stem};
 use super::model::{Block, ParseStats, Record, RecordKind, Session, ToolResultContent, fold_lines};
 
 /// Codex's session directory: `CODEX_HOME/sessions`, else `~/.codex/sessions`.
@@ -37,28 +36,19 @@ fn discover_in(root: &Path) -> Vec<SessionEntry> {
     // Sessions are nested under date directories, so walk recursively.
     let mut files = Vec::new();
     super::discovery::collect_jsonl(root, &mut files);
-    let mut entries: Vec<SessionEntry> = files.iter().filter_map(|p| scan(p)).collect();
-    entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
-    entries
+    files.iter().filter_map(|p| scan(p)).collect()
 }
 
 /// Scan one Codex session file into list metadata.
 pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
     let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
-    let reader = BufReader::new(fs::File::open(path).ok()?);
+    let values = json_lines(path)?;
 
     let mut project: Option<String> = None;
     let mut session_id: Option<String> = None;
     let mut preview = PreviewPicker::default();
 
-    for line in reader.lines().map_while(Result::ok) {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for value in values {
         match value.get("type").and_then(Value::as_str) {
             Some("session_meta") => {
                 let payload = value.get("payload");

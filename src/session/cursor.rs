@@ -9,14 +9,13 @@
 //! name, the session id from the file name).
 
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::content::first_block_text;
+use super::content::{first_block_text, parse_content};
 use super::discovery::{
-    Agent, PreviewPicker, SessionEntry, decode_project_dir, session_id_from_stem,
+    Agent, PreviewPicker, SessionEntry, decode_project_dir, json_lines, session_id_from_stem,
 };
 use super::model::{Block, ParseStats, Record, RecordKind, Session, fold_lines};
 
@@ -50,7 +49,6 @@ fn discover_in(projects_dir: &Path) -> Vec<SessionEntry> {
             }
         }
     }
-    entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
     entries
 }
 
@@ -78,16 +76,9 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
     let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
     let session_id = session_id_from_stem(path);
 
-    let reader = BufReader::new(fs::File::open(path).ok()?);
+    let values = json_lines(path)?;
     let mut preview = PreviewPicker::default();
-    for line in reader.lines().map_while(Result::ok) {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for value in values {
         if value.get("role").and_then(Value::as_str) != Some("user") {
             continue;
         }
@@ -180,40 +171,6 @@ fn other_role(role: &str, content: &Value) -> RecordKind {
     }
 }
 
-fn parse_content(content: &Value) -> Vec<Block> {
-    match content {
-        Value::String(s) => vec![Block::Text(s.clone())],
-        Value::Array(items) => items.iter().filter_map(parse_block).collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn parse_block(block: &Value) -> Option<Block> {
-    let b = match block.get("type").and_then(Value::as_str)? {
-        "text" => Block::Text(
-            block
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        ),
-        // Cursor tool_use carries no id; there are no tool_results to link to.
-        "tool_use" => Block::ToolUse {
-            id: String::new(),
-            name: block
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            input: block.get("input").cloned().unwrap_or(Value::Null),
-        },
-        other => Block::Unknown {
-            block_type: other.to_string(),
-        },
-    };
-    Some(b)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,6 +221,17 @@ mod tests {
         let e = scan(&path).unwrap();
         fs::remove_dir_all(&tmp).ok();
         assert_eq!(e.project, "Users/me/projects/demo");
+    }
+
+    #[test]
+    fn content_blocks_parse_as_claude_does() {
+        let line =
+            r#"{"role":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"}]}}"#;
+        let (session, _) = parse(line);
+        assert!(matches!(
+            &session.records[0].kind,
+            RecordKind::Assistant(b) if matches!(&b[0], Block::Thinking(t) if t == "hmm")
+        ));
     }
 
     #[test]

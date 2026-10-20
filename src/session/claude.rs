@@ -5,16 +5,15 @@
 //! line into the shared model; unknown events and broken lines are tolerated.
 
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::content::first_block_text;
+use super::content::{first_block_text, parse_content};
 use super::discovery::{
-    Agent, PreviewPicker, SessionEntry, decode_project_dir, session_id_from_stem,
+    Agent, PreviewPicker, SessionEntry, decode_project_dir, json_lines, session_id_from_stem,
 };
-use super::model::{Block, ParseStats, Record, RecordKind, Session, ToolResultContent, fold_lines};
+use super::model::{ParseStats, Record, RecordKind, Session, fold_lines};
 
 /// Claude's session directory: `CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`.
 fn base_dir() -> PathBuf {
@@ -55,7 +54,6 @@ fn discover_in(projects_dir: &Path) -> Vec<SessionEntry> {
             }
         }
     }
-    entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
     entries
 }
 
@@ -69,17 +67,10 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
     let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
     let session_id = session_id_from_stem(path);
 
-    let reader = BufReader::new(fs::File::open(path).ok()?);
+    let values = json_lines(path)?;
     let mut project: Option<String> = None;
     let mut preview = PreviewPicker::default();
-    for line in reader.lines().map_while(Result::ok) {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for value in values {
         if project.is_none()
             && let Some(cwd) = value.get("cwd").and_then(Value::as_str)
         {
@@ -174,93 +165,6 @@ fn parse_record(value: &Value) -> Option<Record> {
 }
 
 /// `message.content`: either a string or an array of blocks.
-fn parse_content(content: &Value) -> Vec<Block> {
-    match content {
-        Value::String(s) => vec![Block::Text(s.clone())],
-        Value::Array(items) => items.iter().filter_map(parse_block).collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn parse_block(block: &Value) -> Option<Block> {
-    let block_type = block.get("type").and_then(Value::as_str)?;
-    let b = match block_type {
-        "text" => Block::Text(
-            block
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        ),
-        "thinking" => Block::Thinking(
-            block
-                .get("thinking")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        ),
-        "tool_use" => Block::ToolUse {
-            id: block
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            name: block
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            input: block.get("input").cloned().unwrap_or(Value::Null),
-        },
-        "tool_result" => Block::ToolResult {
-            tool_use_id: block
-                .get("tool_use_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            content: parse_tool_result_content(block.get("content")),
-            is_error: block
-                .get("is_error")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        },
-        other => Block::Unknown {
-            block_type: other.to_string(),
-        },
-    };
-    Some(b)
-}
-
-/// `tool_result.content`: a string, or an array of `text`/`image`/`tool_reference`.
-/// Non-text elements become placeholders; no binary is retained.
-fn parse_tool_result_content(content: Option<&Value>) -> ToolResultContent {
-    match content {
-        Some(Value::String(s)) => ToolResultContent::Text(s.clone()),
-        Some(Value::Array(items)) => {
-            let parts = items
-                .iter()
-                .map(|item| {
-                    let t = item
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown");
-                    match t {
-                        "text" => item
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        "image" => "[image]".to_string(),
-                        other => format!("[{other}]"),
-                    }
-                })
-                .collect();
-            ToolResultContent::Blocks(parts)
-        }
-        _ => ToolResultContent::Text(String::new()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

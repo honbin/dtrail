@@ -176,12 +176,20 @@ pub fn detect(input: &str) -> Agent {
 
 /// Like [`detect`] but reads only the head of a file (for `discover_dir`).
 fn agent_of_file(path: &Path) -> Option<Agent> {
-    let file = fs::File::open(path).ok()?;
-    BufReader::new(file)
-        .lines()
-        .map_while(Result::ok)
-        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
-        .find_map(|value| agent_of_value(&value))
+    json_lines(path)?.find_map(|value| agent_of_value(&value))
+}
+
+/// The JSON value of each line of a file, skipping blank and unparsable lines.
+/// Lazy, so a scan can stop at the first lines it needs; unlike `fold_lines`
+/// nothing is counted.
+pub(crate) fn json_lines(path: &Path) -> Option<impl Iterator<Item = Value>> {
+    let reader = BufReader::new(fs::File::open(path).ok()?);
+    Some(
+        reader
+            .lines()
+            .map_while(Result::ok)
+            .filter_map(|line| serde_json::from_str(line.trim()).ok()),
+    )
 }
 
 /// Injected wrappers that aren't a real prompt: blank text, interrupt markers,
