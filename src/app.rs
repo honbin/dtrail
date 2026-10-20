@@ -25,6 +25,16 @@ pub enum Mode {
     Visual,
 }
 
+/// Files larger than this show only their head while browsing the list.
+const HEAD_ONLY_ABOVE: u64 = 5 * 1024 * 1024;
+/// How much of a large file the list's side view parses.
+pub const HEAD_BYTES: u64 = 1024 * 1024;
+
+/// A byte count as whole megabytes, for notices.
+pub fn megabytes(bytes: u64) -> String {
+    format!("{} MB", bytes.div_ceil(1024 * 1024))
+}
+
 pub struct App {
     entries: Vec<SessionEntry>,
     /// Indices into `entries` that pass the current filter (all when empty).
@@ -40,6 +50,9 @@ pub struct App {
     conversation: Option<ConversationView>,
     /// `entries` index currently loaded into `conversation`, to avoid reparsing.
     loaded_index: Option<usize>,
+    /// The head-only conversation is to be replaced by the whole file once the
+    /// loading notice has been drawn (see [`App::finish_pending_load`]).
+    pending_full_load: bool,
     /// Opened with a single file (no list); `q` quits instead of returning.
     direct: bool,
     focus: Focus,
@@ -67,6 +80,7 @@ impl App {
             list: Scroll::default(),
             conversation: None,
             loaded_index: None,
+            pending_full_load: false,
             direct: false,
             focus: Focus::List,
             maximized: false,
@@ -88,6 +102,7 @@ impl App {
             list: Scroll::default(),
             conversation: Some(ConversationView::new(session)),
             loaded_index: None,
+            pending_full_load: false,
             direct: true,
             focus: Focus::Conversation,
             maximized: true,
@@ -164,7 +179,7 @@ impl App {
             return;
         }
         self.focus = Focus::Conversation;
-        self.carry_filter_into_search();
+        self.enter_conversation();
     }
 
     /// Dive from the list into the conversation: focus it and read full-width.
@@ -174,7 +189,38 @@ impl App {
         }
         self.focus = Focus::Conversation;
         self.maximized = true;
+        self.enter_conversation();
+    }
+
+    /// Reading needs the whole session: a head-only view is reloaded in full,
+    /// after one frame shows the loading notice, since the parse blocks input.
+    fn enter_conversation(&mut self) {
+        match self.conversation.as_ref().and_then(|v| v.partial_of()) {
+            Some(total) => {
+                self.set_notice(format!("loading {}…", megabytes(total)));
+                self.pending_full_load = true;
+            }
+            None => self.carry_filter_into_search(),
+        }
+    }
+
+    /// Run a full load requested by [`App::enter_conversation`]; true if one ran.
+    /// Called by the event loop right after drawing.
+    pub fn finish_pending_load(&mut self) -> bool {
+        if !std::mem::take(&mut self.pending_full_load) {
+            return false;
+        }
+        let entry = self.loaded_index.and_then(|i| self.entries.get(i));
+        if let Some((session, stats)) =
+            entry.and_then(|e| discovery::load(&e.path, Some(e.agent)).ok())
+        {
+            let mut view = ConversationView::new(session);
+            view.set_skipped_lines(stats.skipped_lines);
+            self.conversation = Some(view);
+        }
+        self.clear_notice();
         self.carry_filter_into_search();
+        true
     }
 
     /// Carry the list filter in as a body search so entering the conversation
@@ -412,14 +458,25 @@ impl App {
             return;
         }
         self.loaded_index = idx;
-        self.conversation = idx
-            .and_then(|i| self.entries.get(i))
-            .and_then(|e| discovery::load(&e.path, Some(e.agent)).ok())
-            .map(|(session, stats)| {
+        self.conversation = idx.and_then(|i| self.entries.get(i)).and_then(|e| {
+            // A large file is parsed only up to its head while browsing, so
+            // passing over it in the list doesn't stall on a full parse.
+            let size = std::fs::metadata(&e.path).map_or(0, |m| m.len());
+            let head_only = size > HEAD_ONLY_ABOVE;
+            let loaded = if head_only {
+                discovery::load_head(&e.path, Some(e.agent), HEAD_BYTES)
+            } else {
+                discovery::load(&e.path, Some(e.agent))
+            };
+            loaded.ok().map(|(session, stats)| {
                 let mut view = ConversationView::new(session);
                 view.set_skipped_lines(stats.skipped_lines);
+                if head_only {
+                    view.set_partial(size);
+                }
                 view
-            });
+            })
+        });
     }
 
     /// Re-filter the list. `to_first_match` puts the cursor on the first row;

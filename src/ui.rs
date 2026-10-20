@@ -329,6 +329,13 @@ fn conversation_status_left(view: &ConversationView) -> String {
         .unwrap_or(0);
     let when = view.started_at().map(format_timestamp).unwrap_or_default();
     let sid = view.session_id().unwrap_or("(unknown)");
+    let partial = view.partial_of().map_or(String::new(), |total| {
+        format!(
+            "  (first {} of {}; l/Enter loads all)",
+            crate::app::megabytes(crate::app::HEAD_BYTES),
+            crate::app::megabytes(total)
+        )
+    });
     let skipped = match view.skipped_lines() {
         0 => String::new(),
         n => format!(
@@ -338,7 +345,7 @@ fn conversation_status_left(view: &ConversationView) -> String {
     };
     // `when` and `sid` come straight from the session file (raw timestamp / id),
     // so sanitize before they reach the terminal — same as body and list rows.
-    sanitize_display(&format!(" {when}  {sid}  {pos}%{skipped}"))
+    sanitize_display(&format!(" {when}  {sid}  {pos}%{partial}{skipped}"))
 }
 
 /// The reserved line below the status bar: a transient notice, the visual-mode

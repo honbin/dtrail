@@ -7,7 +7,7 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -143,14 +143,33 @@ pub fn parse(agent: Agent, input: &str) -> (Session, ParseStats) {
 /// session still being written can end mid-character. A session id missing from
 /// the content falls back to the file name.
 pub fn load(path: &Path, agent: Option<Agent>) -> std::io::Result<(Session, ParseStats)> {
-    let bytes = fs::read(path)?;
-    let input = String::from_utf8_lossy(&bytes);
+    Ok(parse_bytes(path, agent, &fs::read(path)?))
+}
+
+/// Like [`load`] but parses only the first `max_bytes`, cut back to the last
+/// complete line: a quick look at a file too large to parse on every selection.
+pub fn load_head(
+    path: &Path,
+    agent: Option<Agent>,
+    max_bytes: u64,
+) -> std::io::Result<(Session, ParseStats)> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(max_bytes)
+        .read_to_end(&mut bytes)?;
+    let complete = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    bytes.truncate(complete);
+    Ok(parse_bytes(path, agent, &bytes))
+}
+
+fn parse_bytes(path: &Path, agent: Option<Agent>, bytes: &[u8]) -> (Session, ParseStats) {
+    let input = String::from_utf8_lossy(bytes);
     let agent = agent.unwrap_or_else(|| detect(&input));
     let (mut session, stats) = parse(agent, &input);
     if session.session_id.is_none() {
         session.session_id = Some(session_id_from_stem(path));
     }
-    Ok((session, stats))
+    (session, stats)
 }
 
 /// Classify one parsed line by agent, or `None` if it carries no agent signal.
@@ -348,6 +367,25 @@ mod tests {
         assert_eq!(session.records.len(), 1);
         assert_eq!(stats.skipped_lines, 1);
         assert_eq!(session.session_id.as_deref(), Some("sess-9"));
+    }
+
+    #[test]
+    fn load_head_parses_only_the_complete_lines_within_the_limit() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-head-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("sess-h.jsonl");
+        let first = r#"{"type":"user","message":{"role":"user","content":"first"}}"#;
+        let second = r#"{"type":"user","message":{"role":"user","content":"second"}}"#;
+        fs::write(&path, format!("{first}\n{second}\n")).unwrap();
+
+        // The limit falls inside the second line, which is left out whole.
+        let limit = (first.len() + 10) as u64;
+        let result = load_head(&path, None, limit);
+        fs::remove_dir_all(&tmp).ok();
+
+        let (session, stats) = result.unwrap();
+        assert_eq!(session.records.len(), 1);
+        assert_eq!(stats.skipped_lines, 0);
     }
 
     #[cfg(unix)]

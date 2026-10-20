@@ -48,6 +48,7 @@ pub struct ConversationView {
     visual_anchor: Option<usize>,
     /// Lines of the file that failed to parse and are not shown.
     skipped_lines: usize,
+    partial_of: Option<u64>,
 }
 
 impl ConversationView {
@@ -70,7 +71,18 @@ impl ConversationView {
             carried_search: None,
             visual_anchor: None,
             skipped_lines: 0,
+            partial_of: None,
         }
+    }
+
+    /// Mark this view as only the head of a larger file of `total_bytes`.
+    pub fn set_partial(&mut self, total_bytes: u64) {
+        self.partial_of = Some(total_bytes);
+    }
+
+    /// Size of the whole file when only its head is loaded.
+    pub fn partial_of(&self) -> Option<u64> {
+        self.partial_of
     }
 
     pub fn set_skipped_lines(&mut self, n: usize) {

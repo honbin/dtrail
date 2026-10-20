@@ -64,6 +64,8 @@ Browsing and reading are distinct: the list pane keeps the list and
 conversation side by side so you can compare sessions. `l` / `Tab` moves into
 the conversation to scroll it with the list still visible; `Enter` dives in and
 reads full-width. `z` overrides the layout manually, independent of diving.
+While browsing, a large session shows only its beginning beside the list, so
+moving past it stays quick; entering it loads the whole file.
 
 ### List pane
 

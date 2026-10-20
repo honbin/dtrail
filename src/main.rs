@@ -48,6 +48,10 @@ fn run(mut app: App) -> std::io::Result<()> {
 
     while !app.should_quit {
         guard.terminal().draw(|frame| ui::draw(frame, &mut app))?;
+        // A full load waits until its notice is on screen, then redraws.
+        if app.finish_pending_load() {
+            continue;
+        }
 
         // Poll so a pending quit can be honored without blocking on input.
         if !event::poll(Duration::from_millis(250))? {

@@ -291,6 +291,34 @@ mod tests {
     }
 
     #[test]
+    fn entering_a_head_only_view_shows_loading_then_loads_the_whole_file() {
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/minimal-session.jsonl"
+        );
+        let mut loadable = entry("/a");
+        loadable.path = PathBuf::from(fixture);
+        let mut app = App::with_entries(vec![loadable]);
+        app.sync_list_viewport(10);
+        app.sync_selection();
+        // Stand in for a file large enough to have been loaded head-only.
+        app.conversation_mut()
+            .unwrap()
+            .set_partial(50 * 1024 * 1024);
+        let mut input = InputState::default();
+
+        input.handle(&mut app, code(KeyCode::Enter));
+        assert_eq!(app.focus(), Focus::Conversation);
+        assert_eq!(app.notice(), Some("loading 50 MB…"));
+
+        // The event loop runs the load after drawing the notice.
+        assert!(app.finish_pending_load());
+        assert_eq!(app.notice(), None);
+        assert_eq!(app.conversation().unwrap().partial_of(), None);
+        assert!(!app.finish_pending_load(), "nothing left to load");
+    }
+
+    #[test]
     fn l_peeks_into_the_body_keeping_the_split_while_enter_reads_full_width() {
         // A real file so sync_selection can load a conversation to focus.
         let fixture = concat!(
