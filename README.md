@@ -50,6 +50,10 @@ argument opens that file — both independent of the default locations, with eac
 file's agent detected from its content (the agents may be mixed). A
 missing path is reported as an error rather than falling back to discovery.
 
+Content of a kind dtrail doesn't recognize (e.g. images, or new item types an
+agent adds) is shown as an `[unknown block: <type>]` placeholder rather than
+dropped, and lines that fail to parse are counted in the status line.
+
 ## Keys
 
 Browsing and reading are distinct: the list pane keeps the list and preview
