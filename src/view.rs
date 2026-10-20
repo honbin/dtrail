@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 
+use crate::session::cursor::USER_QUERY_TAG;
 use crate::session::{Block, RecordKind, Session, ToolResultContent};
 use crate::text::{sanitize_display, wrap_line};
 
@@ -51,8 +52,8 @@ impl Fold<'_> {
 
 /// Flatten a session into display rows wrapped to `width`.
 ///
-/// Foldable items (tool input, tool output, thinking, multi-line system text)
-/// are numbered in flatten order; an item's body rows are emitted only when
+/// Foldable items (tool input, tool output, thinking, multi-line system text,
+/// tag-delimited regions of user text) are numbered in flatten order; an item's body rows are emitted only when
 /// `fold` expands that id.
 pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
     let width = width.max(1) as usize;
@@ -76,7 +77,7 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
                         pushed_header = true;
                     }
                     match block {
-                        Block::Text(text) => b.text(Role::UserText, text),
+                        Block::Text(text) => b.user_text(text),
                         Block::ToolResult {
                             tool_use_id,
                             content,
@@ -120,7 +121,74 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
 /// conversation; folding by shape rather than by tag keeps this agent-agnostic,
 /// and one-liners such as Claude's status notices stay inline.
 fn system_folds(text: &str) -> bool {
-    text.contains('\n')
+    text.trim_end().contains('\n')
+}
+
+/// Lines `start..=end` of a text block, from a line holding only `<name ...>`
+/// to the matching `</name>` line.
+struct Region<'a> {
+    start: usize,
+    end: usize,
+    name: &'a str,
+}
+
+/// Outermost multi-line tag regions in user text. Harness context is often
+/// wrapped this way; matching on shape rather than a list of tag names keeps
+/// dtrail from tracking each agent's vocabulary. A user's own pasted markup
+/// may fold too, which is harmless since folding hides nothing for good.
+///
+/// The one exception is Cursor's prompt wrapper, which the preview already
+/// knows: folding it would hide what the user typed. Keep it the only one.
+fn tagged_regions<'a>(lines: &[&'a str]) -> Vec<Region<'a>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if let Some(name) = open_tag(lines[i])
+            && name != USER_QUERY_TAG
+            && let Some(end) = matching_close(lines, i, name)
+        {
+            out.push(Region {
+                start: i,
+                end,
+                name,
+            });
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The tag name if `line` is nothing but an opening tag (attributes allowed).
+fn open_tag(line: &str) -> Option<&str> {
+    let inner = line.trim().strip_prefix('<')?.strip_suffix('>')?;
+    if inner.contains(['<', '>']) || inner.ends_with('/') {
+        return None;
+    }
+    let name = inner.split_whitespace().next()?;
+    let mut chars = name.chars();
+    let valid = chars.next()?.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.'));
+    valid.then_some(name)
+}
+
+/// Index of the `</name>` line closing the tag opened at `open`, with at least
+/// one line between them; same-name nesting is counted.
+fn matching_close(lines: &[&str], open: usize, name: &str) -> Option<usize> {
+    let close = format!("</{name}>");
+    let mut depth = 0;
+    for (j, line) in lines.iter().enumerate().skip(open + 1) {
+        if open_tag(line) == Some(name) {
+            depth += 1;
+        } else if line.trim() == close {
+            if depth == 0 {
+                return (j > open + 1).then_some(j);
+            }
+            depth -= 1;
+        }
+    }
+    None
 }
 
 /// Searchable text of each foldable item, in the same order [`build_rows`]
@@ -132,8 +200,17 @@ pub fn fold_item_texts(session: &Session) -> Vec<String> {
         match &record.kind {
             RecordKind::User(blocks) => {
                 for block in blocks {
-                    if let Block::ToolResult { content, .. } = block {
-                        out.push(content.as_display_string());
+                    match block {
+                        Block::Text(text) => {
+                            let lines: Vec<&str> = text.split('\n').collect();
+                            for r in tagged_regions(&lines) {
+                                out.push(lines[r.start..=r.end].join("\n"));
+                            }
+                        }
+                        Block::ToolResult { content, .. } => {
+                            out.push(content.as_display_string());
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -190,6 +267,32 @@ impl Builder<'_> {
     fn text(&mut self, role: Role, text: &str) {
         for line in text.split('\n') {
             self.plain(role, line);
+        }
+    }
+
+    /// User text with each tag region folded under a `<name>` header.
+    fn user_text(&mut self, text: &str) {
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut next = 0;
+        for r in tagged_regions(&lines) {
+            for line in &lines[next..r.start] {
+                self.plain(Role::UserText, line);
+            }
+            let (id, expanded) = self.next_fold();
+            let count = r.end - r.start + 1;
+            self.header(
+                Role::UserText,
+                id,
+                expanded,
+                &format!("<{}> [{count} lines]", r.name),
+            );
+            if expanded {
+                self.body(Role::UserText, id, &lines[r.start..=r.end].join("\n"));
+            }
+            next = r.end + 1;
+        }
+        for line in &lines[next..] {
+            self.plain(Role::UserText, line);
         }
     }
 
@@ -409,7 +512,7 @@ mod tests {
         let jsonl = concat!(
             r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<instructions>\nbe terse\n</instructions>"}]}}"#,
             "\n",
-            r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"one line"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"one line\n"}]}}"#,
             "\n",
         );
         assert_eq!(
@@ -446,6 +549,106 @@ mod tests {
                 "[unknown block: x]",
             ]
         );
+    }
+
+    fn user_text_rows(text: &str, fold: Fold) -> Vec<String> {
+        let line = serde_json::json!({"type": "user", "message": {"content": text}}).to_string();
+        let (session, _) = crate::session::claude::parse(&line);
+        build_rows(&session, fold, 80)
+            .into_iter()
+            .map(|r| r.text)
+            .collect()
+    }
+
+    #[test]
+    fn a_tag_region_in_user_text_starts_folded() {
+        let text = "see below\n<ctx kind=\"x\">\n  a\n  b\n</ctx>\nthanks";
+        assert_eq!(
+            user_text_rows(text, Fold::Ids(&HashSet::new())),
+            vec!["● user", "see below", "▸ <ctx> [4 lines]", "thanks"]
+        );
+        assert_eq!(
+            user_text_rows(text, Fold::All),
+            vec![
+                "● user",
+                "see below",
+                "▾ <ctx> [4 lines]",
+                "<ctx kind=\"x\">",
+                "  a",
+                "  b",
+                "</ctx>",
+                "thanks",
+            ]
+        );
+    }
+
+    #[test]
+    fn only_closed_multi_line_tag_regions_fold() {
+        for text in [
+            "<a>one line</a>",
+            "<a>\nnever closed",
+            "<a>\n</a>",
+            "<br/>\nx\n</br>",
+            "</a>\nx\n</a>",
+        ] {
+            let rows = user_text_rows(text, Fold::Ids(&HashSet::new()));
+            assert!(
+                rows.iter().all(|r| !r.starts_with('▸')),
+                "{text:?}: {rows:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_user_query_stays_open_while_injected_blocks_fold() {
+        let text = "<attached_files>\na.rs\nb.rs\n</attached_files>\n<user_query>\nfix the\nparser\n</user_query>";
+        let line = serde_json::json!({
+            "role": "user",
+            "message": {"content": [{"type": "text", "text": text}]}
+        })
+        .to_string();
+        let (session, _) = crate::session::cursor::parse(&line);
+        let rows: Vec<String> = build_rows(&session, Fold::Ids(&HashSet::new()), 80)
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                "● user",
+                "▸ <attached_files> [4 lines]",
+                "<user_query>",
+                "fix the",
+                "parser",
+                "</user_query>",
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_tags_fold_as_their_outermost_region() {
+        let lines = ["<a>", "<a>", "x", "</a>", "</a>", "<b>", "y", "</b>"];
+        let regions = tagged_regions(&lines);
+        let spans: Vec<_> = regions.iter().map(|r| (r.start, r.end, r.name)).collect();
+        assert_eq!(spans, vec![(0, 4, "a"), (5, 7, "b")]);
+    }
+
+    #[test]
+    fn tag_regions_align_with_fold_item_texts() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<a>\nx\n</a>\nhi\n<b>\ny\n</b>"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"}]}}"#,
+            "\n",
+        );
+        let (session, _) = crate::session::claude::parse(jsonl);
+        let texts = fold_item_texts(&session);
+        assert_eq!(texts, vec!["<a>\nx\n</a>", "<b>\ny\n</b>", "hmm"]);
+        let ids: std::collections::BTreeSet<usize> = build_rows(&session, Fold::All, 100)
+            .iter()
+            .filter_map(|r| r.fold)
+            .collect();
+        assert!(ids.into_iter().eq(0..texts.len()));
     }
 
     #[test]

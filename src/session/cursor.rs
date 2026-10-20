@@ -118,12 +118,16 @@ fn user_text(value: &Value) -> Option<String> {
     Some(user_query(&text).unwrap_or(text))
 }
 
+/// Tag Cursor wraps the typed prompt in, apart from the injected context
+/// around it. The body view keeps it unfolded for the same reason.
+pub(crate) const USER_QUERY_TAG: &str = "user_query";
+
 /// Inner text of the first `<user_query>…</user_query>`, trimmed, if present.
 fn user_query(text: &str) -> Option<String> {
-    const OPEN: &str = "<user_query>";
-    let start = text.find(OPEN)? + OPEN.len();
+    let open = format!("<{USER_QUERY_TAG}>");
+    let start = text.find(&open)? + open.len();
     let rest = &text[start..];
-    let end = rest.find("</user_query>")?;
+    let end = rest.find(&format!("</{USER_QUERY_TAG}>"))?;
     Some(rest[..end].trim().to_string())
 }
 
