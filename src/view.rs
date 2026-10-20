@@ -17,6 +17,7 @@ pub enum Role {
     AssistantText,
     Thinking,
     ToolHeader,
+    ToolError,
     ToolBody,
     System,
 }
@@ -83,6 +84,7 @@ fn walk(session: &Session, b: &mut Builder) {
                     if !pushed_header && !matches!(block, Block::ToolResult { .. }) {
                         b.turn_gap();
                         b.plain(Role::UserHeader, "● user");
+                        b.assistant_open = false;
                         pushed_header = true;
                     }
                     match block {
@@ -102,7 +104,10 @@ fn walk(session: &Session, b: &mut Builder) {
                     match block {
                         Block::Text(text) => {
                             b.turn_gap();
-                            b.plain(Role::UserHeader, "◆ assistant");
+                            if !b.assistant_open {
+                                b.plain(Role::UserHeader, "◆ assistant");
+                                b.assistant_open = true;
+                            }
                             b.text(Role::AssistantText, text);
                         }
                         Block::Thinking(text) => b.thinking(text),
@@ -209,6 +214,10 @@ struct Builder<'a> {
     unknown_run: Option<(usize, String, usize)>,
     /// Each fold's searchable text, collected only for [`fold_item_texts`].
     fold_texts: Option<Vec<String>>,
+    /// An agent writes one reply as several records split by tool calls; a
+    /// header per record would read as separate replies, so it is shown once
+    /// until the next user turn. The blank gap still marks each text block.
+    assistant_open: bool,
 }
 
 impl<'a> Builder<'a> {
@@ -219,6 +228,7 @@ impl<'a> Builder<'a> {
             next_fold_id: 0,
             unknown_run: None,
             fold_texts: collect_texts.then(Vec::new),
+            assistant_open: false,
         }
     }
 
@@ -359,13 +369,12 @@ impl<'a> Builder<'a> {
         let (id, expanded) = self.next_fold(|| body.clone());
         // An empty result shows no body when unfolded.
         let line_count = if body.is_empty() { 0 } else { row_count(&body) };
-        let tag = if is_error { "error" } else { "result" };
-        self.header(
-            Role::ToolHeader,
-            id,
-            expanded,
-            &format!("└ {tag} [{line_count} lines]"),
-        );
+        let (tag, role) = if is_error {
+            ("error", Role::ToolError)
+        } else {
+            ("result", Role::ToolHeader)
+        };
+        self.header(role, id, expanded, &format!("└ {tag} [{line_count} lines]"));
         if expanded && !body.is_empty() {
             self.body(Role::ToolBody, id, &body);
         }
@@ -672,6 +681,51 @@ mod tests {
         assert_eq!(
             row_texts(&session, Fold::All),
             vec!["[unknown block: x]", "● user", "[unknown block: x]"]
+        );
+    }
+
+    #[test]
+    fn the_assistant_header_shows_once_per_user_turn() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"go"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"first"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"out"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"second"}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":"again"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"third"}]}}"#,
+            "\n",
+        );
+        let (session, _) = crate::session::claude::parse(jsonl);
+        let rows: Vec<String> = build_rows(&session, Fold::Ids(&HashSet::new()), 80)
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                "● user",
+                "go",
+                "",
+                "◆ assistant",
+                "first",
+                "▸ ⚙ Bash  ls",
+                "▸ └ result [1 lines]",
+                "",
+                "second",
+                "",
+                "● user",
+                "again",
+                "",
+                "◆ assistant",
+                "third",
+            ]
         );
     }
 

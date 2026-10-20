@@ -395,12 +395,13 @@ fn style_for(role: Role) -> Style {
             .add_modifier(Modifier::BOLD),
         Role::UserText => Style::default().fg(Color::White),
         Role::AssistantText => Style::default().fg(Color::Reset),
+        // Scaffolding around the conversation recedes so the prose leads.
+        Role::ToolHeader | Role::System => Style::default().fg(Color::DarkGray),
         Role::Thinking => Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC),
-        Role::ToolHeader => Style::default().fg(Color::Yellow),
+        Role::ToolError => Style::default().fg(Color::Red),
         Role::ToolBody => Style::default().fg(Color::Gray),
-        Role::System => Style::default().fg(Color::Magenta),
     }
 }
 
