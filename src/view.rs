@@ -4,9 +4,8 @@
 
 use std::collections::HashSet;
 
-use crate::session::cursor::USER_QUERY_TAG;
-use crate::session::discovery::split_tag_name;
 use crate::session::{Block, RecordKind, Session, ToolResultContent};
+use crate::tags::{tag_line, tagged_regions};
 use crate::text::{sanitize_display, wrap_line};
 
 /// Semantic role of a row; the UI maps this to a color.
@@ -14,6 +13,9 @@ use crate::text::{sanitize_display, wrap_line};
 pub enum Role {
     UserHeader,
     UserText,
+    /// Tag scaffolding in user text: a folded region's header, or a line of
+    /// only tags and whole tagged elements (see [`tag_line`]).
+    UserTag,
     AssistantText,
     Thinking,
     ToolHeader,
@@ -142,70 +144,6 @@ fn system_folds(text: &str) -> bool {
     text.trim_end().contains('\n')
 }
 
-/// Lines `start..=end` of a text block, from a line holding only `<name ...>`
-/// to the matching `</name>` line.
-struct Region<'a> {
-    start: usize,
-    end: usize,
-    name: &'a str,
-}
-
-/// Outermost multi-line tag regions in user text. Harness context is often
-/// wrapped this way; matching on shape rather than a list of tag names keeps
-/// dtrail from tracking each agent's vocabulary. A user's own pasted markup
-/// may fold too, which is harmless since folding hides nothing for good.
-///
-/// The one exception is Cursor's prompt wrapper, which the preview already
-/// knows: folding it would hide what the user typed. Keep it the only one.
-fn tagged_regions<'a>(lines: &[&'a str]) -> Vec<Region<'a>> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if let Some(name) = open_tag(lines[i])
-            && name != USER_QUERY_TAG
-            && let Some(end) = matching_close(lines, i, name)
-        {
-            out.push(Region {
-                start: i,
-                end,
-                name,
-            });
-            i = end + 1;
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
-/// The tag name if `line` is nothing but an opening tag (attributes allowed).
-fn open_tag(line: &str) -> Option<&str> {
-    let inner = line.trim().strip_prefix('<')?.strip_suffix('>')?;
-    if inner.contains(['<', '>']) || inner.ends_with('/') {
-        return None;
-    }
-    let (name, after) = split_tag_name(inner)?;
-    (after.is_empty() || after.starts_with(char::is_whitespace)).then_some(name)
-}
-
-/// Index of the `</name>` line closing the tag opened at `open`, with at least
-/// one line between them; same-name nesting is counted.
-fn matching_close(lines: &[&str], open: usize, name: &str) -> Option<usize> {
-    let close = format!("</{name}>");
-    let mut depth = 0;
-    for (j, line) in lines.iter().enumerate().skip(open + 1) {
-        if open_tag(line) == Some(name) {
-            depth += 1;
-        } else if line.trim() == close {
-            if depth == 0 {
-                return (j > open + 1).then_some(j);
-            }
-            depth -= 1;
-        }
-    }
-    None
-}
-
 struct Builder<'a> {
     logical: Vec<Row>,
     fold: Fold<'a>,
@@ -267,12 +205,12 @@ impl<'a> Builder<'a> {
         let mut next = 0;
         for r in tagged_regions(&lines) {
             for line in &lines[next..r.start] {
-                self.plain(Role::UserText, line);
+                self.user_line(line);
             }
             let region = lines[r.start..=r.end].join("\n");
             let (id, expanded) = self.next_fold(|| region.clone());
             self.header(
-                Role::UserText,
+                Role::UserTag,
                 id,
                 expanded,
                 &format!("<{}> [{} lines]", r.name, row_count(&region)),
@@ -283,8 +221,17 @@ impl<'a> Builder<'a> {
             next = r.end + 1;
         }
         for line in &lines[next..] {
-            self.plain(Role::UserText, line);
+            self.user_line(line);
         }
+    }
+
+    fn user_line(&mut self, line: &str) {
+        let role = if tag_line(line) {
+            Role::UserTag
+        } else {
+            Role::UserText
+        };
+        self.plain(role, line);
     }
 
     /// Take the next fold id and whether that item is currently expanded,
@@ -547,14 +494,24 @@ mod tests {
         );
     }
 
-    fn user_text_rows(text: &str, fold: Fold) -> Vec<String> {
+    fn user_text_session(text: &str) -> Session {
         let line = serde_json::json!({"type": "user", "message": {"content": text}}).to_string();
-        row_texts(&crate::session::claude::parse(&line).0, fold)
+        crate::session::claude::parse(&line).0
+    }
+
+    fn user_text_rows(text: &str, fold: Fold) -> Vec<String> {
+        row_texts(&user_text_session(text), fold)
     }
 
     #[test]
     fn a_tag_region_in_user_text_starts_folded() {
         let text = "see below\n<ctx kind=\"x\">\n  a\n  b\n</ctx>\nthanks";
+        let roles: Vec<Role> = build_rows(&user_text_session(text), Fold::All, 80)
+            .iter()
+            .map(|r| r.role)
+            .collect();
+        assert_eq!(roles[2], Role::UserTag, "header");
+        assert!(roles[3..7].iter().all(|r| *r == Role::UserText), "body");
         assert_eq!(
             user_text_rows(text, Fold::Ids(&HashSet::new())),
             vec!["● user", "see below", "▸ <ctx> [4 lines]", "thanks"]
@@ -617,11 +574,30 @@ mod tests {
     }
 
     #[test]
-    fn nested_tags_fold_as_their_outermost_region() {
-        let lines = ["<a>", "<a>", "x", "</a>", "</a>", "<b>", "y", "</b>"];
-        let regions = tagged_regions(&lines);
-        let spans: Vec<_> = regions.iter().map(|r| (r.start, r.end, r.name)).collect();
-        assert_eq!(spans, vec![(0, 4, "a"), (5, 7, "b")]);
+    fn a_line_closing_one_region_can_open_the_next() {
+        let text = "<A>\nx\n</A><b>\ny\n</b>";
+        assert_eq!(
+            user_text_rows(text, Fold::Ids(&HashSet::new())),
+            vec!["● user", "▸ <A> [3 lines]", "▸ <b> [2 lines]"]
+        );
+        assert_eq!(
+            user_text_rows(text, Fold::All),
+            vec![
+                "● user",
+                "▾ <A> [3 lines]",
+                "<A>",
+                "x",
+                "</A><b>",
+                "▾ <b> [2 lines]",
+                "y",
+                "</b>",
+            ]
+        );
+        // Without a region to close, the shared line opens one itself.
+        assert_eq!(
+            user_text_rows("</A><b>\ny\n</b>", Fold::Ids(&HashSet::new())),
+            vec!["● user", "▸ <b> [3 lines]"]
+        );
     }
 
     #[test]

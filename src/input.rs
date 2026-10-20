@@ -247,6 +247,7 @@ mod tests {
             project: project.to_string(),
             modified: Some(SystemTime::UNIX_EPOCH),
             summary: "summary".to_string(),
+            is_prompt: true,
         }
     }
 
@@ -369,6 +370,7 @@ mod tests {
         let prose1 = entry("/a"); // entry() gives a plain "summary"
         let mut command = entry("/b");
         command.summary = "<command-name>/clear</command-name>".to_string();
+        command.is_prompt = false;
         let prose2 = entry("/c");
         let mut app = App::with_entries(vec![prose1, command, prose2]);
         app.sync_list_viewport(10);

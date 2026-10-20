@@ -54,9 +54,13 @@ Content of a kind dtrail doesn't recognize (e.g. images, or new item types an
 agent adds) is shown as an `[unknown block: <type>]` placeholder rather than
 dropped (a run of the same type shares one row with a count), and lines that
 fail to parse are counted in the status line. Multi-line system text, such as
-injected instructions, starts folded, as does any block of user text that runs
-from a line holding only `<name>` to its matching `</name>` line (except
-Cursor's `<user_query>`, which holds the prompt itself).
+injected instructions, starts folded, as does any block of user text wrapped
+in a `<name>` … `</name>` pair spanning several lines (except Cursor's
+`<user_query>`, which holds the prompt itself). A user line made only of tags
+and whole tagged elements, such as a command wrapper, is dimmed instead.
+The list preview skips this tag scaffolding and shows the user's own words.
+A session with no typed prompt shows, dimmed and without tags, the command the
+agent first acted on.
 
 ## Keys
 

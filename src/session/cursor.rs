@@ -79,8 +79,13 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
     let values = json_lines(path)?;
     let mut preview = PreviewPicker::default();
     for value in values {
-        if value.get("role").and_then(Value::as_str) != Some("user") {
-            continue;
+        match value.get("role").and_then(Value::as_str) {
+            Some("user") => {}
+            Some("assistant") => {
+                preview.reply_seen();
+                continue;
+            }
+            _ => continue,
         }
         let Some(text) = preview_text(&value) else {
             continue;
@@ -96,6 +101,7 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         session_id,
         project: decode_project_dir(project_dir),
         modified,
+        is_prompt: preview.has_summary(),
         summary: preview.finish(),
     })
 }

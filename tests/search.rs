@@ -214,6 +214,7 @@ fn entry(project: &str, summary: &str) -> SessionEntry {
         project: project.to_string(),
         modified: Some(SystemTime::UNIX_EPOCH),
         summary: summary.to_string(),
+        is_prompt: true,
     }
 }
 
@@ -318,6 +319,7 @@ fn agent_filter_cycles_and_composes_with_text_filter() {
         project: project.to_string(),
         modified: Some(SystemTime::UNIX_EPOCH),
         summary: summary.to_string(),
+        is_prompt: true,
     };
     let mut app = App::with_entries(vec![
         agent_entry(Agent::Claude, "/p/a", "api work"),

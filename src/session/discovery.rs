@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use super::model::{ParseStats, Session};
 use super::{claude, codex, cursor};
+use crate::tags;
 
 /// Which coding agent produced a session. Identity only — the parsing and
 /// discovery for each live in that agent's module.
@@ -57,8 +58,13 @@ pub struct SessionEntry {
     pub project: String,
     /// File mtime, or `None` when it cannot be read.
     pub modified: Option<SystemTime>,
-    /// First real user message (command/meta wrappers skipped); empty if none.
+    /// First real user message (command/meta wrappers skipped), else a raw
+    /// fallback (see [`PreviewPicker`]); empty if none.
     pub summary: String,
+    /// Whether `summary` is a real prompt. Judged once while scanning, since
+    /// `summary` is joined onto one line and no longer has the shape the
+    /// judgment reads.
+    pub is_prompt: bool,
 }
 
 /// All sessions across supported agents, newest first.
@@ -211,48 +217,33 @@ pub(crate) fn json_lines(path: &Path) -> Option<impl Iterator<Item = Value>> {
     )
 }
 
-/// Injected wrappers that aren't a real prompt: blank text, interrupt markers,
-/// and anything opening with a harness-style tag such as `<command-name>`,
-/// `<ide_selection>` or `<environment_context>`. Harness tags tend to be snake/kebab
-/// case while HTML a user might paste ("<div> isn't working") is not, so
-/// the shape tells them apart without tracking each agent's tag names.
+/// The part of `text` a preview shows, if it is a real prompt. Injected
+/// wrappers aren't: blank text, interrupt markers, and text with nothing left
+/// once harness-style tag scaffolding is set aside (see [`tags::prompt_text`]).
 ///
 /// This is a text heuristic for Claude and for Codex logs that predate the
 /// per-turn origin metadata; current Codex logs are classified structurally
 /// (see `codex::scan`).
-pub(crate) fn is_command_or_meta(text: &str) -> bool {
-    let t = text.trim_start();
-    t.is_empty() || t.starts_with("[Request interrupted") || opens_with_harness_tag(t)
-}
-
-fn opens_with_harness_tag(t: &str) -> bool {
-    let Some((name, after)) = t.strip_prefix('<').and_then(split_tag_name) else {
-        return false;
-    };
-    name.contains(['_', '-'])
-        && after.starts_with(|c: char| c == '>' || c == '/' || c.is_whitespace())
-        && after.contains('>')
-}
-
-/// Split a leading tag name (a letter, then letters, digits, `_` or `-`) from
-/// the rest. Shared with the conversation's tag folding so both agree on what
-/// a tag name is.
-pub(crate) fn split_tag_name(s: &str) -> Option<(&str, &str)> {
-    let end = s
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        .unwrap_or(s.len());
-    let (name, after) = s.split_at(end);
-    name.starts_with(|c: char| c.is_ascii_alphabetic())
-        .then_some((name, after))
+fn prompt_of(text: &str) -> Option<String> {
+    if text.trim_start().starts_with("[Request interrupted") {
+        return None;
+    }
+    tags::prompt_text(text)
 }
 
 /// Chooses a session's preview from its user utterances (offered in file order):
-/// the first real prompt, else the first non-empty raw utterance — never inventing
-/// text. Per-format extraction of each utterance stays in each agent.
+/// the first real prompt, else the raw utterance the agent first replied to (the
+/// last one, if it never replied) — never inventing text. Per-format extraction of each utterance stays in each
+/// agent.
+///
+/// The raw fallback takes the last utterance before the first reply rather than
+/// the first one: a session started after `/clear` always opens with that
+/// command, while the one the agent acted on tells sessions apart.
 #[derive(Default)]
 pub(crate) struct PreviewPicker {
     summary: Option<String>,
     raw_user: Option<String>,
+    replied: bool,
 }
 
 impl PreviewPicker {
@@ -261,15 +252,24 @@ impl PreviewPicker {
         if self.summary.is_some() {
             return true;
         }
-        if is_command_or_meta(&text) {
-            if self.raw_user.is_none() && !text.trim().is_empty() {
-                self.raw_user = Some(text);
+        match prompt_of(&text) {
+            Some(prompt) => {
+                self.summary = Some(prompt);
+                true
             }
-            false
-        } else {
-            self.summary = Some(text);
-            true
+            None => {
+                let settled = self.replied && self.raw_user.is_some();
+                if !settled && !text.trim().is_empty() {
+                    self.raw_user = Some(text);
+                }
+                false
+            }
         }
+    }
+
+    /// Called when the agent replies, which settles the raw fallback.
+    pub(crate) fn reply_seen(&mut self) {
+        self.replied = true;
     }
 
     /// A caller may still scan on for other metadata (e.g. `cwd`) after this is true.
@@ -293,6 +293,10 @@ impl PreviewPicker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn is_command_or_meta(text: &str) -> bool {
+        prompt_of(text).is_none()
+    }
 
     #[test]
     fn command_wrappers_are_skipped_as_preview() {
@@ -321,15 +325,45 @@ mod tests {
         ));
         // Tags the shape covers without being listed anywhere.
         assert!(is_command_or_meta(
-            "<multi_agent_mode>be careful</multi_agent_mode> now fix it"
+            "<multi_agent_mode>\nbe careful\n</multi_agent_mode>"
         ));
         assert!(is_command_or_meta("<skills_instructions>\n- a\n"));
+        // Words after a tag on the same line are the user's.
+        assert!(!is_command_or_meta(
+            "<multi_agent_mode>be careful</multi_agent_mode> now fix it"
+        ));
         assert!(!is_command_or_meta("最適化できますか？"));
         // A real prompt that merely starts with `<` must not be treated as meta.
         assert!(!is_command_or_meta("<div> isn't working"));
         assert!(!is_command_or_meta("<T> in generics?"));
         assert!(!is_command_or_meta("<my_var means what"));
         assert!(!is_command_or_meta("<-- is this an arrow"));
+    }
+
+    #[test]
+    fn a_prompt_after_a_wrapped_paste_is_the_preview() {
+        let mut picker = PreviewPicker::default();
+        assert!(picker.offer(
+            "<pasted_content id=\"1\">\nlong paste\n</pasted_content>\n\nreview this".to_string()
+        ));
+        assert_eq!(picker.finish(), "review this");
+    }
+
+    #[test]
+    fn without_a_prompt_the_utterance_first_replied_to_is_the_preview() {
+        let mut picker = PreviewPicker::default();
+        picker.offer("<command-name>/clear</command-name>".to_string());
+        picker.offer("<command-name>/check</command-name>".to_string());
+        picker.reply_seen();
+        picker.offer("<command-name>/later</command-name>".to_string());
+        assert_eq!(picker.finish(), "<command-name>/check</command-name>");
+
+        // A reply before any utterance settles on the first one after it.
+        let mut picker = PreviewPicker::default();
+        picker.reply_seen();
+        picker.offer("<command-name>/a</command-name>".to_string());
+        picker.offer("<command-name>/b</command-name>".to_string());
+        assert_eq!(picker.finish(), "<command-name>/a</command-name>");
     }
 
     #[test]

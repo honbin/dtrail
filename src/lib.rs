@@ -10,6 +10,7 @@ pub mod datefmt;
 pub mod input;
 pub mod scroll;
 pub mod session;
+pub mod tags;
 pub mod terminal;
 pub mod text;
 pub mod ui;

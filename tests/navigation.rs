@@ -113,6 +113,7 @@ fn app_with_entries(n: usize) -> App {
             project: format!("/p/proj{i}"),
             modified: Some(SystemTime::UNIX_EPOCH),
             summary: format!("summary {i}"),
+            is_prompt: true,
         })
         .collect();
     App::with_entries(entries)

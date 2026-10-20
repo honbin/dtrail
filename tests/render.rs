@@ -74,6 +74,7 @@ fn an_active_list_filter_renders_on_its_own_line() {
         project: "/home/me/widget".to_string(),
         modified: Some(SystemTime::UNIX_EPOCH),
         summary: "add preview".to_string(),
+        is_prompt: true,
     };
     let mut app = App::with_entries(vec![entry]);
     render(&mut app); // sync the viewport
@@ -101,6 +102,7 @@ fn list_renders_with_entries_and_filter() {
         project: "/home/me/widget".to_string(),
         modified: Some(SystemTime::UNIX_EPOCH),
         summary: "add preview".to_string(),
+        is_prompt: true,
     };
     let mut app = App::with_entries(vec![entry]);
     let out = render(&mut app);
@@ -121,6 +123,7 @@ fn a_mixed_agent_list_tags_each_row() {
         project: project.to_string(),
         modified: Some(SystemTime::UNIX_EPOCH),
         summary: summary.to_string(),
+        is_prompt: true,
     };
     // Two agents present -> each row carries a (tinted) agent tag.
     let mut app = App::with_entries(vec![

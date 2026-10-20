@@ -144,8 +144,18 @@ fn list_line(
 ) -> Line<'static> {
     let when = relative_time(entry.modified, now);
     let project = short_project(&entry.project);
+    let meta = !entry.is_prompt;
+    // A scaffolding-only preview is kept raw for filtering; only its display
+    // drops the tags so the command it ran reads at a glance.
+    let stripped = if meta {
+        crate::tags::strip_tags(&entry.summary)
+    } else {
+        String::new()
+    };
     let summary = if entry.summary.is_empty() {
         "(no preview)"
+    } else if !stripped.is_empty() {
+        &stripped
     } else {
         &entry.summary
     };
@@ -191,11 +201,7 @@ fn list_line(
     }
     // Dim rows whose preview is only a slash-command/meta line (or empty): still
     // in date order, just de-emphasized so the eye skips them while scanning.
-    let body_fg = if crate::session::discovery::is_command_or_meta(&entry.summary) {
-        Color::DarkGray
-    } else {
-        Color::White
-    };
+    let body_fg = if meta { Color::DarkGray } else { Color::White };
     let body = fit_to_width(&body, total.saturating_sub(used));
     spans.push(Span::styled(body, Style::default().fg(body_fg)));
     Line::from(spans)
@@ -396,7 +402,7 @@ fn style_for(role: Role) -> Style {
         Role::UserText => Style::default().fg(Color::White),
         Role::AssistantText => Style::default().fg(Color::Reset),
         // Scaffolding around the conversation recedes so the prose leads.
-        Role::ToolHeader | Role::System => Style::default().fg(Color::DarkGray),
+        Role::UserTag | Role::ToolHeader | Role::System => Style::default().fg(Color::DarkGray),
         Role::Thinking => Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC),
@@ -410,7 +416,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn entry(summary: &str) -> SessionEntry {
+    fn entry(summary: &str, is_prompt: bool) -> SessionEntry {
         SessionEntry {
             agent: Agent::Claude,
             path: PathBuf::from("/x"),
@@ -418,12 +424,13 @@ mod tests {
             project: "/home/me/widget".to_string(),
             modified: Some(SystemTime::UNIX_EPOCH),
             summary: summary.to_string(),
+            is_prompt,
         }
     }
 
-    fn body_fg(summary: &str) -> Option<Color> {
+    fn body_fg(summary: &str, is_prompt: bool) -> Option<Color> {
         let line = list_line(
-            &entry(summary),
+            &entry(summary, is_prompt),
             false,
             true,
             SystemTime::UNIX_EPOCH,
@@ -435,11 +442,25 @@ mod tests {
 
     #[test]
     fn a_command_only_or_empty_preview_row_is_dimmed() {
-        assert_eq!(body_fg("real prompt text"), Some(Color::White));
+        assert_eq!(body_fg("real prompt text", true), Some(Color::White));
         assert_eq!(
-            body_fg("<command-name>/clear</command-name>"),
+            body_fg("<command-name>/clear</command-name>", false),
             Some(Color::DarkGray)
         );
-        assert_eq!(body_fg(""), Some(Color::DarkGray)); // "(no preview)"
+        assert_eq!(body_fg("", false), Some(Color::DarkGray)); // "(no preview)"
+    }
+
+    #[test]
+    fn a_command_only_preview_shows_without_its_tags() {
+        let line = list_line(
+            &entry("<command-name>/clear</command-name>", false),
+            false,
+            true,
+            SystemTime::UNIX_EPOCH,
+            80,
+            false,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.trim_end().ends_with("widget  /clear"), "{text:?}");
     }
 }

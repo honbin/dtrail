@@ -72,6 +72,8 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
                 let role = payload.and_then(|p| p.get("role")).and_then(Value::as_str);
                 if is_message && role == Some("user") && !is_injected_context(payload.unwrap()) {
                     preview.offer(message_text(payload.unwrap()));
+                } else if is_message && role == Some("assistant") {
+                    preview.reply_seen();
                 }
             }
             _ => {}
@@ -89,6 +91,7 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
         session_id,
         project: project.unwrap_or_default(),
         modified,
+        is_prompt: preview.has_summary(),
         summary: preview.finish(),
     })
 }
@@ -424,8 +427,8 @@ mod tests {
         let e = scan(&path).unwrap();
         fs::remove_dir_all(&tmp).ok();
 
-        // No real prompt → the raw first user utterance (the command), not the
-        // assistant's reply.
+        // No real prompt → the raw utterance the assistant replied to (the
+        // command), not the reply itself.
         assert_eq!(e.summary, "<command-name>/clear</command-name>");
     }
 }

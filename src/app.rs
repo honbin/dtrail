@@ -7,7 +7,7 @@
 
 use crate::conversation::ConversationView;
 use crate::scroll::Scroll;
-use crate::session::discovery::{self, is_command_or_meta};
+use crate::session::discovery;
 use crate::session::{Agent, Session, SessionEntry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -494,7 +494,7 @@ impl App {
             .iter()
             .enumerate()
             .filter(|(_, e)| agent.is_none_or(|a| e.agent == a))
-            .filter(|(_, e)| !prose_only || !is_command_or_meta(&e.summary))
+            .filter(|(_, e)| !prose_only || e.is_prompt)
             .filter(|(_, e)| {
                 q.is_empty()
                     || e.project.to_lowercase().contains(&q)

@@ -78,6 +78,8 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         }
         if let Some(text) = preview_text(&value) {
             preview.offer(text);
+        } else if value.get("type").and_then(Value::as_str) == Some("assistant") {
+            preview.reply_seen();
         }
         if project.is_some() && preview.has_summary() {
             break;
@@ -90,6 +92,7 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         session_id,
         project: project.unwrap_or_else(|| decode_project_dir(project_dir)),
         modified,
+        is_prompt: preview.has_summary(),
         summary: preview.finish(),
     })
 }
@@ -201,6 +204,7 @@ mod tests {
         assert_eq!(e.session_id, "sess-1");
         assert_eq!(e.project, "/Users/me/projects/demo");
         assert_eq!(e.summary, "本当の最初の質問");
+        assert!(e.is_prompt);
     }
 
     #[test]
@@ -222,9 +226,10 @@ mod tests {
         let e = scan(&path).unwrap();
         fs::remove_dir_all(&tmp).ok();
 
-        // No real prompt, so the preview shows the raw first user utterance (the
-        // command) as a recorded fact — not the assistant's reply.
+        // No real prompt, so the preview shows the raw utterance the assistant
+        // replied to (the command) as a recorded fact — not the reply itself.
         assert_eq!(e.summary, "<command-name>/clear</command-name>");
+        assert!(!e.is_prompt);
     }
 
     #[test]
