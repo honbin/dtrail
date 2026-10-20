@@ -146,10 +146,7 @@ fn parse_record(value: &Value) -> Option<Record> {
     let kind = match value.get("role").and_then(Value::as_str)? {
         "user" => RecordKind::User(parse_content(content)),
         "assistant" => RecordKind::Assistant(parse_content(content)),
-        other => RecordKind::System {
-            subtype: Some(other.to_string()),
-            text: String::new(),
-        },
+        other => other_role(other, content),
     };
     Some(Record {
         uuid: None,
@@ -160,6 +157,29 @@ fn parse_record(value: &Value) -> Option<Record> {
 }
 
 /// `message.content` is an array of `text`/`tool_use` blocks (string tolerated).
+/// A role dtrail doesn't model keeps its text as system text, or a placeholder
+/// when it has none, so the message is never silently dropped from the body.
+fn other_role(role: &str, content: &Value) -> RecordKind {
+    let text = parse_content(content)
+        .into_iter()
+        .filter_map(|b| match b {
+            Block::Text(t) => Some(t),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() {
+        RecordKind::Assistant(vec![Block::Unknown {
+            block_type: role.to_string(),
+        }])
+    } else {
+        RecordKind::System {
+            subtype: Some(role.to_string()),
+            text,
+        }
+    }
+}
+
 fn parse_content(content: &Value) -> Vec<Block> {
     match content {
         Value::String(s) => vec![Block::Text(s.clone())],
@@ -244,6 +264,25 @@ mod tests {
         let e = scan(&path).unwrap();
         fs::remove_dir_all(&tmp).ok();
         assert_eq!(e.project, "Users/me/projects/demo");
+    }
+
+    #[test]
+    fn other_roles_are_shown_not_dropped() {
+        let jsonl = concat!(
+            r#"{"role":"system","message":{"content":[{"type":"text","text":"be terse"}]}}"#,
+            "\n",
+            r#"{"role":"tool","message":{"content":[]}}"#,
+            "\n",
+        );
+        let (session, _) = parse(jsonl);
+        assert!(matches!(
+            &session.records[0].kind,
+            RecordKind::System { subtype: Some(r), text } if r == "system" && text == "be terse"
+        ));
+        assert!(matches!(
+            &session.records[1].kind,
+            RecordKind::Assistant(b) if matches!(&b[0], Block::Unknown { block_type } if block_type == "tool")
+        ));
     }
 
     #[test]
