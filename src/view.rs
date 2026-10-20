@@ -54,17 +54,25 @@ impl Fold<'_> {
 /// Flatten a session into display rows wrapped to `width`.
 ///
 /// Foldable items (tool input, tool output, thinking, multi-line system text,
-/// tag-delimited regions of user text) are numbered in flatten order; an item's body rows are emitted only when
-/// `fold` expands that id.
+/// tag-delimited regions of user text) are numbered in flatten order; an item's
+/// body rows are emitted only when `fold` expands that id.
 pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
-    let width = width.max(1) as usize;
-    let mut b = Builder {
-        logical: Vec::new(),
-        fold,
-        next_fold_id: 0,
-        unknown_run: None,
-    };
+    let mut b = Builder::new(fold, false);
+    walk(session, &mut b);
+    wrap_rows(b.logical, width.max(1) as usize)
+}
 
+/// Searchable text of each foldable item, indexed by fold id. Lets search find
+/// matches inside folded items without building and wrapping every row; it
+/// shares [`walk`] with [`build_rows`] so the ids cannot drift apart.
+pub fn fold_item_texts(session: &Session) -> Vec<String> {
+    let collapsed = HashSet::new();
+    let mut b = Builder::new(Fold::Ids(&collapsed), true);
+    walk(session, &mut b);
+    b.fold_texts.unwrap_or_default()
+}
+
+fn walk(session: &Session, b: &mut Builder) {
     for record in &session.records {
         match &record.kind {
             RecordKind::User(blocks) => {
@@ -114,8 +122,6 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
             RecordKind::Meta { .. } => {}
         }
     }
-
-    wrap_rows(b.logical, width)
 }
 
 /// Rows [`Builder::body`] emits for `text`, so a header's line count matches
@@ -195,56 +201,27 @@ fn matching_close(lines: &[&str], open: usize, name: &str) -> Option<usize> {
     None
 }
 
-/// Searchable text of each foldable item, in the same order [`build_rows`]
-/// assigns fold ids (so the index is the fold id). Lets search find matches
-/// inside folded items without building and wrapping every row.
-pub fn fold_item_texts(session: &Session) -> Vec<String> {
-    let mut out = Vec::new();
-    for record in &session.records {
-        match &record.kind {
-            RecordKind::User(blocks) => {
-                for block in blocks {
-                    match block {
-                        Block::Text(text) => {
-                            let lines: Vec<&str> = text.split('\n').collect();
-                            for r in tagged_regions(&lines) {
-                                out.push(lines[r.start..=r.end].join("\n"));
-                            }
-                        }
-                        Block::ToolResult { content, .. } => {
-                            out.push(content.as_display_string());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            RecordKind::Assistant(blocks) => {
-                for block in blocks {
-                    match block {
-                        Block::Thinking(text) => out.push(text.clone()),
-                        Block::ToolUse { name, input, .. } => {
-                            out.push(format!("{name} {}", tool_input_text(input)));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            RecordKind::System { text, .. } if system_folds(text) => out.push(text.clone()),
-            _ => {}
-        }
-    }
-    out
-}
-
 struct Builder<'a> {
     logical: Vec<Row>,
     fold: Fold<'a>,
     next_fold_id: usize,
     /// Row index, block type and count of the trailing unknown placeholder.
     unknown_run: Option<(usize, String, usize)>,
+    /// Each fold's searchable text, collected only for [`fold_item_texts`].
+    fold_texts: Option<Vec<String>>,
 }
 
-impl Builder<'_> {
+impl<'a> Builder<'a> {
+    fn new(fold: Fold<'a>, collect_texts: bool) -> Self {
+        Builder {
+            logical: Vec::new(),
+            fold,
+            next_fold_id: 0,
+            unknown_run: None,
+            fold_texts: collect_texts.then(Vec::new),
+        }
+    }
+
     /// Blank separator before a speaker turn, unless at the top or already blank.
     fn turn_gap(&mut self) {
         if self.logical.last().is_some_and(|r| !r.text.is_empty()) {
@@ -282,8 +259,8 @@ impl Builder<'_> {
             for line in &lines[next..r.start] {
                 self.plain(Role::UserText, line);
             }
-            let (id, expanded) = self.next_fold();
             let region = lines[r.start..=r.end].join("\n");
+            let (id, expanded) = self.next_fold(|| region.clone());
             self.header(
                 Role::UserText,
                 id,
@@ -300,8 +277,12 @@ impl Builder<'_> {
         }
     }
 
-    /// Take the next fold id and whether that item is currently expanded.
-    fn next_fold(&mut self) -> (usize, bool) {
+    /// Take the next fold id and whether that item is currently expanded,
+    /// recording the item's searchable text when collecting.
+    fn next_fold(&mut self, text: impl FnOnce() -> String) -> (usize, bool) {
+        if let Some(texts) = &mut self.fold_texts {
+            texts.push(text());
+        }
         let id = self.next_fold_id;
         self.next_fold_id += 1;
         (id, self.fold.is_expanded(id))
@@ -345,7 +326,7 @@ impl Builder<'_> {
     }
 
     fn system(&mut self, subtype: Option<&str>, text: &str) {
-        let (id, expanded) = self.next_fold();
+        let (id, expanded) = self.next_fold(|| text.to_string());
         let line_count = row_count(text);
         let name = subtype.unwrap_or("system");
         self.header(
@@ -360,7 +341,7 @@ impl Builder<'_> {
     }
 
     fn tool_use(&mut self, name: &str, input: &serde_json::Value) {
-        let (id, expanded) = self.next_fold();
+        let (id, expanded) = self.next_fold(|| format!("{name} {}", tool_input_text(input)));
         let summary = summarize_input(input);
         self.header(
             Role::ToolHeader,
@@ -374,8 +355,8 @@ impl Builder<'_> {
     }
 
     fn tool_result(&mut self, _tool_use_id: &str, content: &ToolResultContent, is_error: bool) {
-        let (id, expanded) = self.next_fold();
         let body = content.as_display_string();
+        let (id, expanded) = self.next_fold(|| body.clone());
         // An empty result shows no body when unfolded.
         let line_count = if body.is_empty() { 0 } else { row_count(&body) };
         let tag = if is_error { "error" } else { "result" };
@@ -391,7 +372,7 @@ impl Builder<'_> {
     }
 
     fn thinking(&mut self, text: &str) {
-        let (id, expanded) = self.next_fold();
+        let (id, expanded) = self.next_fold(|| text.to_string());
         let line_count = row_count(text);
         self.header(
             Role::Thinking,

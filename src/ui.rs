@@ -153,17 +153,12 @@ fn list_line(
     // Split the agent tag out so it can be tinted on its own. Only shown (and
     // only non-empty) when the list spans several agents; padded to the widest
     // label so the project column stays aligned.
-    let (tag, body) = if show_agent {
-        (
-            sanitize_display(&format!("  {:<6}", entry.agent.label())),
-            sanitize_display(&format!("  {project}  {summary}")),
-        )
+    let tag = if show_agent {
+        sanitize_display(&format!("  {:<6}", entry.agent.label()))
     } else {
-        (
-            String::new(),
-            sanitize_display(&format!("  {project}  {summary}")),
-        )
+        String::new()
     };
+    let body = sanitize_display(&format!("  {project}  {summary}"));
 
     // The selected row is a uniform highlight; column coloring would clash.
     if selected {
