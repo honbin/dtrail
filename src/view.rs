@@ -27,6 +27,8 @@ pub struct Row {
     /// Foldable item this row belongs to, if any. Stable across rebuilds since
     /// ids are assigned in flatten order. A row with `Some` id can be toggled.
     pub fold: Option<usize>,
+    /// Soft-wrapped continuation of the previous row, so a yank can rejoin it.
+    pub continued: bool,
 }
 
 /// Which foldable items are expanded when building rows.
@@ -78,6 +80,7 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
                             content,
                             is_error,
                         } => b.tool_result(tool_use_id, content, *is_error),
+                        Block::Unknown { block_type } => b.unknown(block_type),
                         _ => {}
                     }
                 }
@@ -92,9 +95,7 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
                         }
                         Block::Thinking(text) => b.thinking(text),
                         Block::ToolUse { name, input, .. } => b.tool_use(name, input),
-                        Block::Unknown { block_type } => {
-                            b.plain(Role::System, &format!("[unknown block: {block_type}]"));
-                        }
+                        Block::Unknown { block_type } => b.unknown(block_type),
                         Block::ToolResult { .. } => {}
                     }
                 }
@@ -130,8 +131,7 @@ pub fn fold_item_texts(session: &Session) -> Vec<String> {
                     match block {
                         Block::Thinking(text) => out.push(text.clone()),
                         Block::ToolUse { name, input, .. } => {
-                            let input = serde_json::to_string_pretty(input).unwrap_or_default();
-                            out.push(format!("{name} {input}"));
+                            out.push(format!("{name} {}", tool_input_text(input)));
                         }
                         _ => {}
                     }
@@ -157,6 +157,7 @@ impl Builder<'_> {
                 role: Role::UserText,
                 text: String::new(),
                 fold: None,
+                continued: false,
             });
         }
     }
@@ -167,6 +168,7 @@ impl Builder<'_> {
             role,
             text: text.to_string(),
             fold: None,
+            continued: false,
         });
     }
 
@@ -190,6 +192,7 @@ impl Builder<'_> {
                 role,
                 text: line.to_string(),
                 fold: Some(id),
+                continued: false,
             });
         }
     }
@@ -200,7 +203,12 @@ impl Builder<'_> {
             role,
             text: format!("{marker} {label}"),
             fold: Some(id),
+            continued: false,
         });
+    }
+
+    fn unknown(&mut self, block_type: &str) {
+        self.plain(Role::System, &format!("[unknown block: {block_type}]"));
     }
 
     fn tool_use(&mut self, name: &str, input: &serde_json::Value) {
@@ -213,8 +221,7 @@ impl Builder<'_> {
             &format!("⚙ {name}  {summary}"),
         );
         if expanded {
-            let pretty = serde_json::to_string_pretty(input).unwrap_or_default();
-            self.body(Role::ToolBody, id, &pretty);
+            self.body(Role::ToolBody, id, &tool_input_text(input));
         }
     }
 
@@ -252,7 +259,20 @@ impl Builder<'_> {
     }
 }
 
+/// A tool's input as shown in its body. Freeform input (e.g. a Codex patch) is
+/// a plain string; pretty-printing it as JSON would collapse it onto one line
+/// of `\n` escapes.
+fn tool_input_text(input: &serde_json::Value) -> String {
+    match input {
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string_pretty(other).unwrap_or_default(),
+    }
+}
+
 fn summarize_input(input: &serde_json::Value) -> String {
+    if let Some(s) = input.as_str() {
+        return truncate_one_line(s, 60);
+    }
     // Prefer a common key for a one-line summary; fall back to compact JSON.
     for key in [
         "command",
@@ -262,8 +282,14 @@ fn summarize_input(input: &serde_json::Value) -> String {
         "description",
         "query",
     ] {
-        if let Some(v) = input.get(key).and_then(|v| v.as_str()) {
-            return truncate_one_line(v, 60);
+        match input.get(key) {
+            Some(serde_json::Value::String(v)) => return truncate_one_line(v, 60),
+            // An argv array, e.g. Codex's `shell` command.
+            Some(serde_json::Value::Array(parts)) if parts.iter().all(|p| p.is_string()) => {
+                let argv: Vec<&str> = parts.iter().filter_map(|p| p.as_str()).collect();
+                return truncate_one_line(&argv.join(" "), 60);
+            }
+            _ => {}
         }
     }
     truncate_one_line(&input.to_string(), 60)
@@ -289,14 +315,16 @@ fn wrap_rows(logical: Vec<Row>, width: usize) -> Vec<Row> {
                 role: r.role,
                 text,
                 fold: r.fold,
+                continued: false,
             });
             continue;
         }
-        for chunk in wrap_line(&text, width) {
+        for (i, chunk) in wrap_line(&text, width).into_iter().enumerate() {
             out.push(Row {
                 role: r.role,
                 text: chunk,
                 fold: r.fold,
+                continued: i > 0,
             });
         }
     }
@@ -324,5 +352,26 @@ mod tests {
         // Same count, and ids are exactly 0..len (no drift between the two).
         assert_eq!(ids.len(), texts.len());
         assert!(ids.into_iter().eq(0..texts.len()));
+    }
+
+    #[test]
+    fn a_string_tool_input_keeps_its_line_breaks() {
+        let input = serde_json::Value::String("*** Begin Patch\n*** End Patch".to_string());
+        assert_eq!(tool_input_text(&input), "*** Begin Patch\n*** End Patch");
+        assert_eq!(summarize_input(&input), "*** Begin Patch *** End Patch");
+    }
+
+    #[test]
+    fn an_argv_command_is_summarized_as_a_command_line() {
+        let input = serde_json::json!({"command": ["bash", "-lc", "ls"]});
+        assert_eq!(summarize_input(&input), "bash -lc ls");
+    }
+
+    #[test]
+    fn an_unknown_user_block_leaves_a_placeholder() {
+        let jsonl = r#"{"type":"user","message":{"content":[{"type":"text","text":"see"},{"type":"image","source":{}}]}}"#;
+        let (session, _) = crate::session::claude::parse(jsonl);
+        let rows = build_rows(&session, Fold::All, 80);
+        assert!(rows.iter().any(|r| r.text == "[unknown block: image]"));
     }
 }

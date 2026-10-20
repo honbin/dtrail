@@ -1,9 +1,11 @@
 //! Agent identity, the list-row metadata type, and multi-agent discovery.
 //!
 //! Each supported agent keeps its own discovery + parsing in its module
-//! ([`super::claude`], [`super::codex`]); this file only ties them together.
+//! ([`super::claude`], [`super::codex`], [`super::cursor`]); this file only ties
+//! them together.
 
 use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -69,7 +71,7 @@ pub fn discover() -> Vec<SessionEntry> {
 }
 
 /// All sessions under an arbitrary directory (recursive), with each file's
-/// agent detected from its content. Backs `ccs <dir>`; agents may be mixed.
+/// agent detected from its content. Backs `dtrail <dir>`; agents may be mixed.
 pub fn discover_dir(root: &Path) -> Vec<SessionEntry> {
     let mut files = Vec::new();
     collect_jsonl(root, &mut files);
@@ -100,14 +102,26 @@ pub(crate) fn session_id_from_stem(path: &Path) -> String {
 }
 
 /// Recursively collect `*.jsonl` files under `dir`. Unreadable dirs are skipped.
+/// Symlinked dirs are followed, but each real dir is walked once so a link
+/// cycle can't list the same files over and over.
 pub(crate) fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
+    walk_jsonl(dir, out, &mut HashSet::new());
+}
+
+fn walk_jsonl(dir: &Path, out: &mut Vec<PathBuf>, visited: &mut HashSet<PathBuf>) {
+    let Ok(real) = fs::canonicalize(dir) else {
+        return;
+    };
+    if !visited.insert(real) {
+        return;
+    }
     let Ok(rd) = fs::read_dir(dir) else {
         return;
     };
     for entry in rd.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_jsonl(&path, out);
+            walk_jsonl(&path, out, visited);
         } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
             out.push(path);
         }
@@ -122,6 +136,21 @@ pub fn parse(agent: Agent, input: &str) -> (Session, ParseStats) {
         Agent::Codex => codex::parse(input),
         Agent::Cursor => cursor::parse(input),
     }
+}
+
+/// Read and parse a session file. `agent` is detected from the content when not
+/// known. Invalid UTF-8 is replaced rather than failing the whole file, since a
+/// session still being written can end mid-character. A session id missing from
+/// the content falls back to the file name.
+pub fn load(path: &Path, agent: Option<Agent>) -> std::io::Result<(Session, ParseStats)> {
+    let bytes = fs::read(path)?;
+    let input = String::from_utf8_lossy(&bytes);
+    let agent = agent.unwrap_or_else(|| detect(&input));
+    let (mut session, stats) = parse(agent, &input);
+    if session.session_id.is_none() {
+        session.session_id = Some(session_id_from_stem(path));
+    }
+    Ok((session, stats))
 }
 
 /// Classify one parsed line by agent, or `None` if it carries no agent signal.
@@ -158,8 +187,9 @@ fn agent_of_file(path: &Path) -> Option<Agent> {
 /// Injected wrappers that aren't a real prompt: the slash-command family
 /// (`<command-name>`, `<command-message>`, `<command-args>`), local command
 /// output (`<local-command-stdout>`, `<local-command-stderr>`), interrupt
-/// markers, and Claude Code's IDE context turns (`<ide_opened_file>`,
-/// `<ide_selection>`). Matched by their specific tag prefixes, not a bare `<`, so
+/// markers, Claude Code's IDE context turns (`<ide_opened_file>`,
+/// `<ide_selection>`), and Codex's injected context (`<environment_context>`,
+/// `<user_instructions>`). Matched by their specific tag prefixes, not a bare `<`, so
 /// a genuine prompt that happens to start with `<` (e.g. "<div> isn't working") is
 /// not mistaken for metadata.
 ///
@@ -174,6 +204,8 @@ pub(crate) fn is_command_or_meta(text: &str) -> bool {
         || t.starts_with("[Request interrupted")
         || t.starts_with("<ide_opened_file")
         || t.starts_with("<ide_selection")
+        || t.starts_with("<environment_context")
+        || t.starts_with("<user_instructions")
 }
 
 /// Chooses a session's preview from its user utterances (offered in file order):
@@ -234,6 +266,13 @@ mod tests {
         assert!(is_command_or_meta(
             "<ide_selection>lines 1-5</ide_selection>"
         ));
+        // Codex context injected as a user message in logs without origin metadata.
+        assert!(is_command_or_meta(
+            "<environment_context>\n  <cwd>/p</cwd>\n</environment_context>"
+        ));
+        assert!(is_command_or_meta(
+            "<user_instructions>be terse</user_instructions>"
+        ));
         assert!(!is_command_or_meta("最適化できますか？"));
         // A real prompt that merely starts with `<` must not be treated as meta.
         assert!(!is_command_or_meta("<div> isn't working"));
@@ -248,6 +287,51 @@ mod tests {
         assert_eq!(detect(codex), Agent::Codex);
         assert_eq!(detect(claude), Agent::Claude);
         assert_eq!(detect(cursor), Agent::Cursor);
+    }
+
+    #[test]
+    fn load_tolerates_invalid_utf8_and_names_the_session_from_the_file() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-load-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("sess-9.jsonl");
+        let mut bytes = br#"{"type":"user","message":{"role":"user","content":"hi"}}"#.to_vec();
+        // A last line cut off in the middle of a multi-byte character.
+        bytes.extend_from_slice(b"\n{\"type\":\"user\",\"x\":\"\xe3\x81");
+
+        fs::write(&path, &bytes).unwrap();
+        let result = load(&path, None);
+        fs::remove_dir_all(&tmp).ok();
+
+        let (session, stats) = result.unwrap();
+        assert_eq!(session.records.len(), 1);
+        assert_eq!(stats.skipped_lines, 1);
+        assert_eq!(session.session_id.as_deref(), Some("sess-9"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_jsonl_follows_symlinked_dirs_but_not_cycles() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-loop-{}", std::process::id()));
+        let root = tmp.join("root");
+        let elsewhere = tmp.join("elsewhere");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(root.join("a.jsonl"), "").unwrap();
+        fs::write(elsewhere.join("b.jsonl"), "").unwrap();
+        // A legitimately linked-in dir, plus a link back to the root.
+        std::os::unix::fs::symlink(&elsewhere, root.join("linked")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+
+        let mut files = Vec::new();
+        collect_jsonl(&root, &mut files);
+        fs::remove_dir_all(&tmp).ok();
+
+        let mut names: Vec<_> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["a.jsonl", "b.jsonl"]);
     }
 
     #[test]

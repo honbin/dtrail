@@ -103,6 +103,17 @@ impl InputState {
         }
     }
 
+    /// Bracketed paste: typed into the query while searching, ignored otherwise.
+    /// Line breaks are dropped since the query is a single line.
+    pub fn paste(&mut self, app: &mut App, text: &str) {
+        if app.mode() != Mode::Search {
+            return;
+        }
+        for c in text.chars().filter(|c| !c.is_control()) {
+            app.search_push(c);
+        }
+    }
+
     /// Line-wise visual selection in the conversation: movement extends the
     /// selection, `y` yanks it to the clipboard, `v`/`V`/`Esc` cancel.
     fn handle_visual(&mut self, app: &mut App, key: KeyEvent, was_pending_g: bool) {
@@ -189,8 +200,9 @@ impl InputState {
 
     fn handle_conversation(&mut self, app: &mut App, key: KeyEvent, was_pending_g: bool) {
         match key.code {
-            KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Left => app.back(),
-            KeyCode::Tab if !app.is_direct() => app.back(),
+            KeyCode::Char('q') => app.back(),
+            // Only `q` quits a directly opened session; these just mean "go left".
+            KeyCode::Char('h') | KeyCode::Left | KeyCode::Tab if !app.is_direct() => app.back(),
             KeyCode::Char('z') => app.toggle_maximize(),
             KeyCode::Char('/') => app.start_search(),
             KeyCode::Char('n') => app.search_next(),
@@ -402,6 +414,40 @@ mod tests {
         let mut input = InputState::default();
         input.handle(&mut app, key('q'));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn h_does_not_quit_a_directly_opened_session() {
+        let mut app = conversation_app();
+        let mut input = InputState::default();
+        input.handle(&mut app, key('h'));
+        input.handle(&mut app, code(KeyCode::Left));
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn paste_goes_into_the_query_only_while_searching() {
+        let mut app = list_app();
+        let mut input = InputState::default();
+        input.paste(&mut app, "ignored");
+        assert_eq!(app.filter_query(), "");
+
+        input.handle(&mut app, key('/'));
+        input.paste(&mut app, "/b\n");
+        assert_eq!(app.filter_query(), "/b");
+        assert_eq!(app.filtered().len(), 1);
+    }
+
+    #[test]
+    fn clearing_the_filter_keeps_the_selected_session() {
+        let mut app = list_app();
+        let mut input = InputState::default();
+        input.handle(&mut app, key('/'));
+        input.handle(&mut app, key('c'));
+        assert_eq!(app.filtered(), &[2]);
+        input.handle(&mut app, code(KeyCode::Esc));
+        // Back on the full list, still on "/c" rather than whatever row 0 was.
+        assert_eq!(app.list_selected(), 2);
     }
 
     #[test]

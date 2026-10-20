@@ -131,3 +131,19 @@ fn list_page_down_advances_a_page_and_selects_the_top() {
     assert_eq!(app.list_offset(), 0);
     assert_eq!(app.list_selected(), 0);
 }
+
+#[test]
+fn a_yank_rejoins_soft_wrapped_rows() {
+    let long = "x".repeat(30);
+    let jsonl = format!(
+        r#"{{"type":"user","sessionId":"s","message":{{"role":"user","content":"{long}\nnext"}}}}"#
+    );
+    let (session, _) = claude::parse(&jsonl);
+    let mut view = ConversationView::new(session);
+    view.sync_viewport(10, 20); // the 30-char line wraps into three rows
+
+    view.begin_visual();
+    view.cursor_bottom();
+    let text = view.selected_text().unwrap();
+    assert_eq!(text, format!("● user\n{long}\nnext"));
+}

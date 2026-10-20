@@ -318,3 +318,52 @@ fn agent_filter_cycles_and_composes_with_text_filter() {
     assert_eq!(app.agent_filter(), None);
     assert_eq!(app.filtered().len(), 3);
 }
+
+#[test]
+fn a_search_revealed_item_can_be_folded_back() {
+    let jsonl = concat!(
+        r#"{"type":"assistant","sessionId":"s","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+        "\n",
+        r#"{"type":"user","sessionId":"s","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"one\nneedle"}]}}"#,
+        "\n",
+    );
+    let (session, _) = claude::parse(jsonl);
+    let mut view = ConversationView::new(session);
+    view.sync_viewport(80, 20);
+    let folded = view.total_rows();
+
+    // The search opens the result; `o` on it folds it despite the match.
+    view.set_search("needle");
+    assert!(view.total_rows() > folded);
+    view.toggle_fold_under_cursor();
+    assert_eq!(view.total_rows(), folded);
+    view.toggle_fold_under_cursor();
+    assert!(view.total_rows() > folded);
+}
+
+#[test]
+fn folding_a_revealed_item_re_anchors_the_match_counter() {
+    let jsonl = concat!(
+        r#"{"type":"user","sessionId":"s","message":{"role":"user","content":"needle first"}}"#,
+        "\n",
+        r#"{"type":"assistant","sessionId":"s","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+        "\n",
+        r#"{"type":"user","sessionId":"s","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"a\nneedle\nneedle"}]}}"#,
+        "\n",
+        r#"{"type":"assistant","sessionId":"s","message":{"content":[{"type":"text","text":"needle last"}]}}"#,
+        "\n",
+    );
+    let (session, _) = claude::parse(jsonl);
+    let mut view = ConversationView::new(session);
+    view.sync_viewport(80, 30);
+    view.set_search("needle");
+    assert_eq!(view.match_info(), Some((1, 4)));
+    view.next_match();
+    view.next_match(); // onto the second match inside the revealed result
+    view.toggle_fold_under_cursor();
+
+    // Two matches remain; the counter points at the one after the folded item.
+    assert_eq!(view.match_info(), Some((2, 2)));
+    view.next_match();
+    assert_eq!(view.match_info(), Some((1, 2)));
+}

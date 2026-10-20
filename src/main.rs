@@ -21,10 +21,9 @@ fn main() -> ExitCode {
             App::with_entries(discovery::discover_dir(std::path::Path::new(&path)))
         }
         // A file: open it directly, agent detected from its content.
-        Some(path) => match std::fs::read_to_string(&path) {
-            Ok(input) => {
-                let agent = discovery::detect(&input);
-                App::with_session(discovery::parse(agent, &input).0)
+        Some(path) => match discovery::load(std::path::Path::new(&path), None) {
+            Ok((session, stats)) => {
+                App::with_session(session).with_skipped_lines(stats.skipped_lines)
             }
             Err(e) => {
                 eprintln!("cannot read {path}: {e}");
@@ -51,19 +50,23 @@ fn run(mut app: App) -> std::io::Result<()> {
         guard.terminal().draw(|frame| ui::draw(frame, &mut app))?;
 
         // Poll so a pending quit can be honored without blocking on input.
-        if event::poll(Duration::from_millis(250))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == event::KeyEventKind::Press
-        {
-            // Ctrl-l forces a full repaint, the usual escape hatch if the
-            // terminal and our model ever diverge and leave stale cells.
-            if key.code == event::KeyCode::Char('l')
-                && key.modifiers.contains(event::KeyModifiers::CONTROL)
-            {
-                guard.terminal().clear()?;
-            } else {
-                keys.handle(&mut app, key);
+        if !event::poll(Duration::from_millis(250))? {
+            continue;
+        }
+        match event::read()? {
+            Event::Key(key) if key.kind == event::KeyEventKind::Press => {
+                // Ctrl-l forces a full repaint, the usual escape hatch if the
+                // terminal and our model ever diverge and leave stale cells.
+                if key.code == event::KeyCode::Char('l')
+                    && key.modifiers.contains(event::KeyModifiers::CONTROL)
+                {
+                    guard.terminal().clear()?;
+                } else {
+                    keys.handle(&mut app, key);
+                }
             }
+            Event::Paste(text) => keys.paste(&mut app, &text),
+            _ => {}
         }
     }
 

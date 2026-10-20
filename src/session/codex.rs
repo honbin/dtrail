@@ -176,9 +176,24 @@ fn record_kind(payload: &Value) -> Option<RecordKind> {
                 is_error: false,
             }]))
         }
-        other => Some(RecordKind::Meta {
-            record_type: other.to_string(),
-        }),
+        // Built-in tools whose input is already structured rather than a string.
+        // The local shell's output arrives as a `function_call_output` with the
+        // same `call_id`.
+        kind @ ("local_shell_call" | "web_search_call" | "tool_search_call") => {
+            Some(RecordKind::Assistant(vec![Block::ToolUse {
+                id: str_field(payload, "call_id"),
+                name: kind.to_string(),
+                input: payload
+                    .get("action")
+                    .or_else(|| payload.get("arguments"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            }]))
+        }
+        // Kept visible as a placeholder, like Claude's unknown blocks.
+        other => Some(RecordKind::Assistant(vec![Block::Unknown {
+            block_type: other.to_string(),
+        }])),
     }
 }
 
@@ -294,6 +309,25 @@ mod tests {
             matches!(&r.kind, RecordKind::Assistant(b) if matches!(b.first(), Some(Block::Thinking(_))))
         });
         assert!(has_thinking);
+    }
+
+    #[test]
+    fn other_item_types_are_shown_not_dropped() {
+        let jsonl = concat!(
+            r#"{"type":"response_item","payload":{"type":"local_shell_call","call_id":"c2","status":"completed","action":{"type":"exec","command":["ls"]}}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"c2","output":"a"}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"image_generation_call","status":"completed","result":""}}"#,
+            "\n",
+        );
+        let (session, _) = parse(jsonl);
+        // The shell call is a tool use its output links to.
+        assert!(session.tool_use_index().contains_key("c2"));
+        assert!(matches!(
+            &session.records[2].kind,
+            RecordKind::Assistant(b) if matches!(&b[0], Block::Unknown { block_type } if block_type == "image_generation_call")
+        ));
     }
 
     #[test]

@@ -109,9 +109,9 @@ fn draw_list(frame: &mut Frame, app: &mut App, area: Rect, now: SystemTime) {
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        // Tag shown only when sessions span both agents (see App); judged over
-        // all entries, so it stays put when filtered to one and never shows for
-        // someone who only uses one.
+        // Tag shown only when sessions span more than one agent (see App); judged
+        // over all entries, so it stays put when filtered to one and never shows
+        // for someone who only uses one.
         let show_agent = app.has_multiple_agents();
         filtered
             .iter()
@@ -151,7 +151,7 @@ fn list_line(
     };
     let age = format!("{when:>6}");
     // Split the agent tag out so it can be tinted on its own. Only shown (and
-    // only non-empty) when the list spans both agents; padded to the widest
+    // only non-empty) when the list spans several agents; padded to the widest
     // label so the project column stays aligned.
     let (tag, body) = if show_agent {
         (
@@ -206,7 +206,7 @@ fn list_line(
     Line::from(spans)
 }
 
-/// Per-agent tint for the list tag, so Claude and Codex rows read apart at a
+/// Per-agent tint for the list tag, so each agent's rows read apart at a
 /// glance in a mixed list.
 fn agent_color(agent: Agent) -> Color {
     match agent {
@@ -334,9 +334,16 @@ fn conversation_status_left(view: &ConversationView) -> String {
         .unwrap_or(0);
     let when = view.started_at().map(format_timestamp).unwrap_or_default();
     let sid = view.session_id().unwrap_or("(unknown)");
+    let skipped = match view.skipped_lines() {
+        0 => String::new(),
+        n => format!(
+            "  ({n} unparsed line{} hidden)",
+            if n == 1 { "" } else { "s" }
+        ),
+    };
     // `when` and `sid` come straight from the session file (raw timestamp / id),
     // so sanitize before they reach the terminal — same as body and list rows.
-    sanitize_display(&format!(" {when}  {sid}  {pos}%"))
+    sanitize_display(&format!(" {when}  {sid}  {pos}%{skipped}"))
 }
 
 /// The reserved line below the status bar: a transient notice, the visual-mode
@@ -379,7 +386,6 @@ fn search_message(app: &App) -> Option<String> {
     }
 }
 
-/// `2026-10-13T12:48:20.086Z` -> `2026-10-13 12:48` (as recorded, UTC).
 fn style_for(role: Role) -> Style {
     match role {
         Role::UserHeader => Style::default()

@@ -83,12 +83,20 @@ impl Scroll {
     }
 
     /// Flip a full page, landing the cursor at the top of the new page (vim
-    /// Ctrl-f / Ctrl-b).
+    /// Ctrl-f / Ctrl-b). When the view can't scroll further (including a list
+    /// that fits on screen), the cursor goes to the last / first row instead.
     pub fn page(&mut self, forward: bool, len: usize) {
         let step = self.full_page() as isize;
         let delta = if forward { step } else { -step };
+        let before = self.offset;
         self.offset = add(self.offset, delta, max_offset(len, self.height));
-        self.cursor = self.offset.min(len.saturating_sub(1));
+        self.cursor = if self.offset != before {
+            self.offset.min(len.saturating_sub(1))
+        } else if forward {
+            len.saturating_sub(1)
+        } else {
+            0
+        };
     }
 
     pub fn snapshot(&self) -> (usize, usize) {
@@ -177,6 +185,15 @@ mod tests {
         assert_eq!(s.offset(), 9);
         assert_eq!(s.cursor(), 9); // top of the new page
         s.page(false, 100);
+        assert_eq!((s.offset(), s.cursor()), (0, 0));
+    }
+
+    #[test]
+    fn a_page_on_a_list_that_fits_moves_to_the_far_end() {
+        let mut s = at(10, 4);
+        s.page(true, 4);
+        assert_eq!((s.offset(), s.cursor()), (0, 3));
+        s.page(false, 4);
         assert_eq!((s.offset(), s.cursor()), (0, 0));
     }
 

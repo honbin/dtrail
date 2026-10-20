@@ -89,7 +89,8 @@ scroll it with the list still visible; `Enter` dives in and reads full-width.
 | `v` / `V` | Start a line-wise visual selection (movement extends it) |
 | `y` | Yank the selection to the clipboard (then `Esc` cancels) |
 | `z` | Toggle full-width / split (zoom) |
-| `h` / `←` / `Tab` / `q` | Back to the list (or quit if opened directly) |
+| `h` / `←` / `Tab` | Back to the list |
+| `q` | Back to the list (or quit if opened directly) |
 
 `Ctrl-l` forces a full redraw from any screen. Yank copies via OSC 52, so it
 works over SSH on terminals that support it (tmux needs `set-clipboard on`).

@@ -7,7 +7,7 @@
 
 use crate::conversation::ConversationView;
 use crate::scroll::Scroll;
-use crate::session::discovery::is_command_or_meta;
+use crate::session::discovery::{self, is_command_or_meta};
 use crate::session::{Agent, Session, SessionEntry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +96,14 @@ impl App {
             notice: None,
             should_quit: false,
         }
+    }
+
+    /// Record how many unparseable lines the open session had, for the status line.
+    pub fn with_skipped_lines(mut self, n: usize) -> Self {
+        if let Some(view) = self.conversation.as_mut() {
+            view.set_skipped_lines(n);
+        }
+        self
     }
 
     pub fn focus(&self) -> Focus {
@@ -254,7 +262,7 @@ impl App {
         match self.focus {
             Focus::List => {
                 self.filter_query.clear();
-                self.recompute_filter();
+                self.recompute_filter(false);
             }
             Focus::Conversation => {
                 if let Some(view) = self.conversation.as_mut() {
@@ -266,7 +274,8 @@ impl App {
 
     fn apply_filter(&mut self) {
         self.filter_query = self.input_buffer.clone();
-        self.recompute_filter();
+        // A typed query lands on its first match so Enter opens it.
+        self.recompute_filter(!self.filter_query.is_empty());
     }
 
     /// Next result: down one row in the list, or the next match in the conversation.
@@ -314,18 +323,10 @@ impl App {
         self.prose_only
     }
 
-    /// Toggle hiding command-only/empty-preview sessions (default off). Keep the
-    /// cursor on the current session when it survives the toggle, so pressing `p`
-    /// mid-list doesn't throw you back to the top.
+    /// Toggle hiding command-only/empty-preview sessions (default off).
     pub fn toggle_prose_only(&mut self) {
-        let current = self.selected_entry_index();
         self.prose_only = !self.prose_only;
-        self.recompute_filter();
-        if let Some(entry_idx) = current
-            && let Some(pos) = self.filtered.iter().position(|&i| i == entry_idx)
-        {
-            self.list.jump_to(pos, self.filtered.len(), 0);
-        }
+        self.recompute_filter(false);
     }
 
     /// Whether the loaded sessions span more than one agent. Gates both the
@@ -349,7 +350,7 @@ impl App {
             Some(Agent::Codex) => Some(Agent::Cursor),
             Some(Agent::Cursor) => None,
         };
-        self.recompute_filter();
+        self.recompute_filter(false);
     }
 
     pub fn list_selected(&self) -> usize {
@@ -413,11 +414,20 @@ impl App {
         self.loaded_index = idx;
         self.conversation = idx
             .and_then(|i| self.entries.get(i))
-            .and_then(load_session)
-            .map(ConversationView::new);
+            .and_then(|e| discovery::load(&e.path, Some(e.agent)).ok())
+            .map(|(session, stats)| {
+                let mut view = ConversationView::new(session);
+                view.set_skipped_lines(stats.skipped_lines);
+                view
+            });
     }
 
-    fn recompute_filter(&mut self) {
+    /// Re-filter the list. `to_first_match` puts the cursor on the first row;
+    /// otherwise it stays on the same session when that session survives (so
+    /// widening the list or toggling `p` doesn't land on an unrelated one), and
+    /// goes to the top when it doesn't.
+    fn recompute_filter(&mut self, to_first_match: bool) {
+        let current = self.selected_entry_index();
         // Agent filter, prose-only filter, and text query compose with AND.
         let q = self.filter_query.to_lowercase();
         let agent = self.agent_filter;
@@ -435,13 +445,13 @@ impl App {
             })
             .map(|(i, _)| i)
             .collect();
-        // Narrowing lands on the first match (so Enter opens it); otherwise keep
-        // the current selection, clamped into range. Reset the scroll to the top.
-        // prose-only isn't counted as narrowing: toggle_prose_only restores the
-        // cursor to the current session itself rather than jumping to the top.
-        let narrowed = !q.is_empty() || agent.is_some();
-        let cursor = if narrowed { 0 } else { self.list.cursor() };
-        self.list.restore(cursor, 0, self.filtered.len());
+        let kept = current
+            .filter(|_| !to_first_match)
+            .and_then(|idx| self.filtered.iter().position(|&i| i == idx));
+        self.list.restore(0, 0, self.filtered.len());
+        if let Some(pos) = kept {
+            self.list.jump_to(pos, self.filtered.len(), 0);
+        }
     }
 
     pub fn conversation(&self) -> Option<&ConversationView> {
@@ -451,9 +461,4 @@ impl App {
     pub fn conversation_mut(&mut self) -> Option<&mut ConversationView> {
         self.conversation.as_mut()
     }
-}
-
-fn load_session(entry: &SessionEntry) -> Option<Session> {
-    let input = std::fs::read_to_string(&entry.path).ok()?;
-    Some(crate::session::discovery::parse(entry.agent, &input).0)
 }

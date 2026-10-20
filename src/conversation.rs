@@ -19,6 +19,9 @@ pub struct ConversationView {
     fold_texts: Vec<String>,
     /// Fold ids currently expanded; empty means everything is folded.
     expanded: HashSet<usize>,
+    /// Items a search revealed that the user folded back; they stay folded until
+    /// the query changes.
+    collapsed: HashSet<usize>,
     /// Line cursor and scroll offset over `rows`.
     scroll: Scroll,
     rows: Vec<Row>,
@@ -39,6 +42,8 @@ pub struct ConversationView {
     /// Row where a line-wise visual selection was started; the selection spans
     /// from here to the cursor. `None` outside visual mode.
     visual_anchor: Option<usize>,
+    /// Lines of the file that failed to parse and are not shown.
+    skipped_lines: usize,
 }
 
 impl ConversationView {
@@ -48,6 +53,7 @@ impl ConversationView {
             session,
             fold_texts,
             expanded: HashSet::new(),
+            collapsed: HashSet::new(),
             scroll: Scroll::default(),
             rows: Vec::new(),
             rows_width: 0,
@@ -58,7 +64,16 @@ impl ConversationView {
             search_origin: None,
             carried_search: None,
             visual_anchor: None,
+            skipped_lines: 0,
         }
+    }
+
+    pub fn set_skipped_lines(&mut self, n: usize) {
+        self.skipped_lines = n;
+    }
+
+    pub fn skipped_lines(&self) -> usize {
+        self.skipped_lines
     }
 
     /// Start a line-wise visual selection anchored at the current row.
@@ -78,7 +93,8 @@ impl ConversationView {
         Some((anchor.min(cursor), anchor.max(cursor)))
     }
 
-    /// Text of the selected rows (as shown), newline-joined, for yanking.
+    /// Text of the selected rows (as shown), for yanking. Soft-wrapped rows are
+    /// rejoined so a long line copies as one line.
     pub fn selected_text(&self) -> Option<String> {
         if self.rows.is_empty() {
             return None;
@@ -86,13 +102,14 @@ impl ConversationView {
         let (lo, hi) = self.visual_range()?;
         let last = self.rows.len() - 1;
         let (lo, hi) = (lo.min(last), hi.min(last));
-        Some(
-            self.rows[lo..=hi]
-                .iter()
-                .map(|r| r.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
+        let mut out = String::new();
+        for (i, row) in self.rows[lo..=hi].iter().enumerate() {
+            if i > 0 && !row.continued {
+                out.push('\n');
+            }
+            out.push_str(&row.text);
+        }
+        Some(out)
     }
 
     pub fn session_id(&self) -> Option<&str> {
@@ -128,7 +145,11 @@ impl ConversationView {
             self.expanded.clone()
         } else {
             let mut set = self.expanded.clone();
-            set.extend(self.fold_ids_containing_match());
+            set.extend(
+                self.fold_ids_containing_match()
+                    .into_iter()
+                    .filter(|id| !self.collapsed.contains(id)),
+            );
             set
         };
         if self.rows.is_empty() || width != self.rows_width || effective != self.last_effective {
@@ -212,8 +233,13 @@ impl ConversationView {
         let Some(Some(id)) = self.rows.get(self.scroll.cursor()).map(|r| r.fold) else {
             return;
         };
-        if !self.expanded.remove(&id) {
+        // Toggle what is shown, which may be open only because a search revealed it.
+        if self.last_effective.contains(&id) {
+            self.expanded.remove(&id);
+            self.collapsed.insert(id);
+        } else {
             self.expanded.insert(id);
+            self.collapsed.remove(&id);
         }
         self.rebuild(self.rows_width.max(1));
         // Keep the cursor on the item's header row after the rebuild.
@@ -221,6 +247,9 @@ impl ConversationView {
             Some(pos) => self.scroll.jump_to(pos, self.rows.len(), 0),
             None => self.scroll.reclamp(self.rows.len()),
         }
+        // The match rows moved, so re-anchor `n`/`N` at the cursor.
+        let cursor = self.scroll.cursor();
+        self.match_cursor = self.matches.iter().position(|&r| r >= cursor).unwrap_or(0);
     }
 
     pub fn search_query(&self) -> &str {
@@ -256,6 +285,7 @@ impl ConversationView {
     pub fn cancel_search(&mut self) {
         let origin = self.search_origin.take();
         self.search_query.clear();
+        self.collapsed.clear();
         self.rebuild(self.rows_width.max(1));
         match origin {
             Some((cursor, offset)) => self.scroll.restore(cursor, offset, self.rows.len()),
@@ -267,6 +297,7 @@ impl ConversationView {
     /// result stays stable as more characters are typed.
     pub fn set_search(&mut self, query: &str) {
         self.search_query = query.to_string();
+        self.collapsed.clear();
         // Rebuild so matches inside folded items are revealed and indexed.
         self.rebuild(self.rows_width.max(1));
 
