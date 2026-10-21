@@ -124,7 +124,7 @@ impl InputState {
                 let text = app.conversation().and_then(|v| v.selected_text());
                 if let (Some((lo, hi)), Some(text)) = (lines, text) {
                     let n = hi - lo + 1;
-                    crate::clipboard::copy(&text);
+                    app.yank(text);
                     app.set_notice(format!("Yanked {n} line{}", if n == 1 { "" } else { "s" }));
                 }
                 app.cancel_visual();
@@ -492,6 +492,8 @@ mod tests {
 
         assert_eq!(app.mode(), Mode::Normal);
         assert_eq!(app.notice(), Some("Yanked 2 lines"));
+        // Left for the event loop to send, so tests never touch the terminal.
+        assert_eq!(app.take_clipboard().as_deref(), Some("● user\nline0"));
     }
 
     #[test]

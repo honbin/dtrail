@@ -66,6 +66,9 @@ fn run(mut app: App) -> std::io::Result<()> {
                 } else {
                     keys.handle(&mut app, key);
                 }
+                if let Some(text) = app.take_clipboard() {
+                    dtrail::clipboard::copy(&text);
+                }
             }
             Event::Paste(text) => keys.paste(&mut app, &text),
             _ => {}

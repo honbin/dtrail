@@ -65,6 +65,9 @@ pub struct App {
     /// A transient one-line notice (e.g. "Yanked 3 lines"), shown until the next
     /// key. Cleared at the start of each input dispatch.
     notice: Option<String>,
+    /// Text yanked for the clipboard, written by the event loop
+    /// ([`App::take_clipboard`]) so key handling never touches the terminal.
+    clipboard: Option<String>,
     pub should_quit: bool,
 }
 
@@ -88,6 +91,7 @@ impl App {
             mode: Mode::Normal,
             input_buffer: String::new(),
             notice: None,
+            clipboard: None,
             should_quit: false,
         }
     }
@@ -127,6 +131,14 @@ impl App {
     /// A transient notice to show on the reserved line, if any.
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
+    }
+
+    pub fn yank(&mut self, text: String) {
+        self.clipboard = Some(text);
+    }
+
+    pub fn take_clipboard(&mut self) -> Option<String> {
+        self.clipboard.take()
     }
 
     pub fn set_notice(&mut self, text: impl Into<String>) {
