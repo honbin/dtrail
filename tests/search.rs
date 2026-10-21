@@ -459,3 +459,74 @@ fn shift_n_after_folding_past_the_last_match_goes_to_the_last() {
     view.prev_match();
     assert_eq!(row_text(&view), "needle two");
 }
+
+/// A conversation whose `needle` rows sit at lines 15 and 30, below the
+/// first screen.
+fn two_needle_app() -> App {
+    let lines: Vec<String> = (0..40)
+        .map(|i| {
+            if i == 15 || i == 30 {
+                "needle".into()
+            } else {
+                format!("line{i}")
+            }
+        })
+        .collect();
+    let content = lines.join("\\n");
+    let jsonl = format!(
+        r#"{{"type":"user","sessionId":"s","message":{{"role":"user","content":"{content}"}}}}"#
+    );
+    let mut app = App::with_session(claude::parse(&jsonl));
+    app.conversation_mut().unwrap().sync_viewport(80, 10);
+    app
+}
+
+#[test]
+fn stepping_while_typing_applies_the_typed_query_and_enter_keeps_the_step() {
+    let mut app = two_needle_app();
+    app.start_search();
+    for c in "needle".chars() {
+        app.search_push(c);
+    }
+
+    // The first step applies the query being typed and lands on its first match.
+    app.search_next();
+    assert_eq!(app.conversation().unwrap().match_info(), Some((1, 2)));
+    app.search_next();
+    assert_eq!(app.conversation().unwrap().match_info(), Some((2, 2)));
+    let stepped = app.conversation().unwrap().cursor();
+
+    // Enter keeps the match stepped to rather than re-applying from the origin.
+    app.search_confirm();
+    assert_eq!(app.conversation().unwrap().cursor(), stepped);
+    assert_eq!(app.conversation().unwrap().match_info(), Some((2, 2)));
+}
+
+#[test]
+fn stepping_back_while_typing_goes_before_the_origin() {
+    let mut app = two_needle_app();
+    app.start_search();
+    for c in "needle".chars() {
+        app.search_push(c);
+    }
+    // From the top, the match before the origin wraps to the last one.
+    app.search_prev();
+    assert_eq!(app.conversation().unwrap().match_info(), Some((2, 2)));
+}
+
+#[test]
+fn a_query_set_from_elsewhere_mid_search_is_not_taken_as_stepped() {
+    let mut app = two_needle_app();
+    app.start_search();
+    for c in "needle".chars() {
+        app.search_push(c);
+    }
+    app.search_next();
+    // Something other than stepping sets the same query, which also lands on
+    // its first match.
+    app.conversation_mut().unwrap().set_search("needle");
+    // The next step re-applies the typed query instead of moving on from the
+    // query it didn't step to, so it stays on that first match.
+    app.search_next();
+    assert_eq!(app.conversation().unwrap().match_info(), Some((1, 2)));
+}

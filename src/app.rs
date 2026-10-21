@@ -276,15 +276,14 @@ impl App {
         }
     }
 
-    /// Confirm the search. The conversation's search is applied here: reveal
-    /// folds that contain a match and jump to the first.
+    /// Confirm the search. The conversation's search is applied here, unless
+    /// Up/Down already did: reveal folds that contain a match and jump to it.
     pub fn search_confirm(&mut self) {
         self.mode = Mode::Normal;
         if self.focus == Focus::Conversation
             && let Some(view) = self.conversation.as_mut()
         {
-            view.set_search(&self.input_buffer);
-            view.accept_search();
+            view.accept_search(&self.input_buffer);
         }
     }
 
@@ -311,13 +310,18 @@ impl App {
         self.recompute_filter(!self.filter_query.is_empty());
     }
 
-    /// Next result: down one row in the list, or the next match in the conversation.
+    /// Next result: down one row in the list, or the next match in the
+    /// conversation, of the query being typed while a search is open.
     pub fn search_next(&mut self) {
         match self.focus {
             Focus::List => self.list_down(1),
             Focus::Conversation => {
                 if let Some(view) = self.conversation.as_mut() {
-                    view.next_match();
+                    if self.mode == Mode::Search {
+                        view.step_search(&self.input_buffer, true);
+                    } else {
+                        view.next_match();
+                    }
                 }
             }
         }
@@ -329,7 +333,11 @@ impl App {
             Focus::List => self.list_up(1),
             Focus::Conversation => {
                 if let Some(view) = self.conversation.as_mut() {
-                    view.prev_match();
+                    if self.mode == Mode::Search {
+                        view.step_search(&self.input_buffer, false);
+                    } else {
+                        view.prev_match();
+                    }
                 }
             }
         }

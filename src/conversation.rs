@@ -40,6 +40,9 @@ pub struct ConversationView {
     /// Cursor/offset captured when an incremental search began, so Esc can
     /// return there. `Some` only while a search is in progress.
     search_origin: Option<(usize, usize)>,
+    /// Whether the query being typed was already applied by stepping to a
+    /// match (Up/Down) before Enter, so Enter keeps that match.
+    search_applied: bool,
     /// A query to apply on the next layout, carried in from the list filter so
     /// it is applied at the real (full) width rather than the split width.
     carried_search: Option<String>,
@@ -68,6 +71,7 @@ impl ConversationView {
             match_cursor: 0,
             match_ahead: false,
             search_origin: None,
+            search_applied: false,
             carried_search: None,
             visual_anchor: None,
             skipped_lines: 0,
@@ -291,16 +295,41 @@ impl ConversationView {
     /// Begin an incremental search, remembering where to return on cancel.
     pub fn begin_search(&mut self) {
         self.search_origin = Some(self.scroll.snapshot());
+        self.search_applied = false;
     }
 
-    /// Keep the match position and end the incremental session (Enter).
-    pub fn accept_search(&mut self) {
+    /// Step to the next or previous match of the query being typed, applying
+    /// it first if it isn't yet; that first step lands on the match nearest the
+    /// origin, after it going forward or before it going back.
+    pub fn step_search(&mut self, query: &str, forward: bool) {
+        if !(self.search_applied && query == self.search_query) {
+            self.set_search(query);
+            self.search_applied = true;
+            if forward {
+                return;
+            }
+        }
+        if forward {
+            self.next_match();
+        } else {
+            self.prev_match();
+        }
+    }
+
+    /// Apply `query` unless stepping already did, keep the match position, and
+    /// end the incremental session (Enter).
+    pub fn accept_search(&mut self, query: &str) {
+        if !(self.search_applied && query == self.search_query) {
+            self.set_search(query);
+        }
         self.search_origin = None;
+        self.search_applied = false;
     }
 
     /// Abandon the search and return to where it began (Esc).
     pub fn cancel_search(&mut self) {
         let origin = self.search_origin.take();
+        self.search_applied = false;
         self.search_query.clear();
         self.collapsed.clear();
         self.match_ahead = false;
@@ -315,6 +344,8 @@ impl ConversationView {
     /// result stays stable as more characters are typed.
     pub fn set_search(&mut self, query: &str) {
         self.search_query = query.to_string();
+        // Only stepping marks the typed query applied; any other caller unmarks it.
+        self.search_applied = false;
         self.collapsed.clear();
         self.match_ahead = false;
         // Rebuild so matches inside folded items are revealed and indexed.
