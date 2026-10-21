@@ -156,7 +156,14 @@ impl InputState {
             KeyCode::Up => app.search_prev(),
             KeyCode::Char('n') if ctrl => app.search_next(),
             KeyCode::Char('p') if ctrl => app.search_prev(),
-            KeyCode::Char(c) => app.search_push(c),
+            // Unbound Ctrl/Alt chords are not text.
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.search_push(c)
+            }
             _ => {}
         }
     }
@@ -494,6 +501,18 @@ mod tests {
         assert_eq!(app.notice(), Some("Yanked 2 lines"));
         // Left for the event loop to send, so tests never touch the terminal.
         assert_eq!(app.take_clipboard().as_deref(), Some("● user\nline0"));
+    }
+
+    #[test]
+    fn unbound_ctrl_keys_are_not_typed_into_a_query() {
+        let mut app = conversation_app();
+        let mut input = InputState::default();
+
+        input.handle(&mut app, key('/'));
+        input.handle(&mut app, key('a'));
+        input.handle(&mut app, ctrl('u'));
+        input.handle(&mut app, ctrl('w'));
+        assert_eq!(app.input_buffer(), "a");
     }
 
     #[test]
