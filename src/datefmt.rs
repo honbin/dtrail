@@ -4,7 +4,7 @@
 
 use std::time::SystemTime;
 
-/// `2026-10-13T21:48:20.086+09:00` -> `2026-10-13 12:48 UTC`. A value
+/// `2026-10-13T12:48:20.086Z` -> `2026-10-13 12:48 UTC`. A value
 /// [`parse_timestamp`] can't read is shown as recorded, cut to the minute and
 /// without the label, since its zone is unknown.
 pub fn format_timestamp(ts: &str) -> String {
@@ -21,60 +21,44 @@ pub fn format_timestamp(ts: &str) -> String {
     format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02} UTC")
 }
 
-/// `2026-10-13T12:48:20.086Z` (or with a `±hh:mm` offset) as a point in time.
-/// Fractional seconds are dropped; anything else, including an out-of-range
-/// field, is `None`. A value without a zone must stay `None`:
-/// [`format_timestamp`] labels whatever parses as UTC.
+/// `2026-10-13T12:48:20.086Z` as a point in time. Fractional seconds are
+/// dropped; anything else, including an out-of-range field or a value with an
+/// offset, is `None`. Both agents with record timestamps write UTC (`Z`), and
+/// a value without one must stay `None`: [`format_timestamp`] labels whatever
+/// parses as UTC.
 pub fn parse_timestamp(ts: &str) -> Option<SystemTime> {
-    let num = |s: &str| -> Option<i64> {
-        s.bytes()
-            .all(|b| b.is_ascii_digit())
-            .then(|| s.parse().ok())
-            .flatten()
-    };
-    let field = |at: usize, len: usize| num(ts.get(at..at + len)?);
-    let sep = |at: usize, c: &str| ts.get(at..at + 1) == Some(c);
     // A fixed-width year also bounds the arithmetic below against overflow.
-    if !(sep(4, "-") && sep(7, "-") && sep(10, "T") && sep(13, ":") && sep(16, ":")) {
-        return None;
-    }
-    let (y, m, d) = (field(0, 4)?, field(5, 2)?, field(8, 2)?);
-    let (h, mi, s) = (field(11, 2)?, field(14, 2)?, field(17, 2)?);
-    if !(1..=12).contains(&m) || h > 23 || mi > 59 || s > 59 {
-        return None;
-    }
-    let days = days_from_civil(y, m as u32, d as u32);
-    // A day past the end of its month (or 0) lands in another month.
-    if civil_from_days(days) != (y, m as u32, d as u32) {
-        return None;
-    }
-    let mut zone = ts.get(19..)?;
-    if let Some(frac) = zone.strip_prefix('.') {
-        zone = frac.trim_start_matches(|c: char| c.is_ascii_digit());
-        if zone.len() == frac.len() {
-            return None;
-        }
-    }
-    let offset = match zone {
-        "Z" | "z" => 0,
-        _ => {
-            let sign = match zone.get(0..1)? {
-                "+" => 1,
-                "-" => -1,
-                _ => return None,
-            };
-            if zone.len() != 6 || zone.get(3..4) != Some(":") {
-                return None;
-            }
-            let (oh, om) = (num(zone.get(1..3)?)?, num(zone.get(4..6)?)?);
-            if oh > 23 || om > 59 {
-                return None;
-            }
-            sign * (oh * 3600 + om * 60)
+    const SHAPE: &[u8] = b"dddd-dd-ddTdd:dd:dd";
+    let fits = |(&p, &c): (&u8, &u8)| {
+        if p == b'd' {
+            c.is_ascii_digit()
+        } else {
+            c == p
         }
     };
-    let secs = days * 86_400 + h * 3600 + mi * 60 + s - offset;
-    Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u64::try_from(secs).ok()?))
+    if ts.len() < SHAPE.len() || !SHAPE.iter().zip(ts.as_bytes()).all(fits) {
+        return None;
+    }
+    // Digits by the shape check, so these slices and parses can't fail.
+    let n = |at: usize, len: usize| ts[at..at + len].parse::<i64>().unwrap();
+    let (y, m, d, h, mi, s) = (n(0, 4), n(5, 2), n(8, 2), n(11, 2), n(14, 2), n(17, 2));
+    let days = days_from_civil(y, m as u32, d as u32);
+    // An impossible month or day (Feb 31, month 13) lands on another date.
+    if h > 23 || mi > 59 || s > 59 || civil_from_days(days) != (y, m as u32, d as u32) {
+        return None;
+    }
+    let rest = &ts[SHAPE.len()..];
+    let zone = match rest.strip_prefix('.') {
+        Some(frac) if frac.starts_with(|c: char| c.is_ascii_digit()) => {
+            frac.trim_start_matches(|c: char| c.is_ascii_digit())
+        }
+        _ => rest,
+    };
+    if zone != "Z" {
+        return None;
+    }
+    let secs = u64::try_from(days * 86_400 + h * 3600 + mi * 60 + s).ok()?;
+    Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs))
 }
 
 /// Relative age within a week (`12m`, `3h`, `2d`), an absolute calendar date
@@ -167,41 +151,37 @@ mod tests {
     }
 
     #[test]
-    fn format_timestamp_normalizes_to_utc() {
+    fn format_timestamp_labels_only_what_it_read_as_utc() {
         assert_eq!(
             format_timestamp("2026-10-05T12:34:56.789Z"),
             "2026-10-05 12:34 UTC"
         );
-        // Offsets are undone, across the date line in either direction.
+        // An offset or a missing zone is shown as recorded, unlabeled.
         assert_eq!(
             format_timestamp("2026-10-06T08:00:00+09:00"),
-            "2026-10-05 23:00 UTC"
-        );
-        assert_eq!(
-            format_timestamp("2026-10-05T20:30:00-05:00"),
-            "2026-10-06 01:30 UTC"
+            "2026-10-06 08:00"
         );
         assert_eq!(format_timestamp("2026-10-05T12:34"), "2026-10-05 12:34");
     }
 
     #[test]
-    fn parse_timestamp_reads_utc_and_offsets() {
+    fn parse_timestamp_reads_only_valid_utc() {
         let at = |secs| Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
         let base = 20_731 * 86_400 + 12 * 3600 + 34 * 60 + 56;
         assert_eq!(parse_timestamp("2026-10-05T12:34:56Z"), at(base));
         assert_eq!(parse_timestamp("2026-10-05T12:34:56.789Z"), at(base));
-        assert_eq!(parse_timestamp("2026-10-05T21:34:56+09:00"), at(base));
+        assert_eq!(parse_timestamp("2026-10-05T21:34:56+09:00"), None);
         assert_eq!(parse_timestamp("2026-10-05T12:34:56"), None);
         assert_eq!(parse_timestamp("2026-10-05T12x34y56Z"), None);
         assert_eq!(parse_timestamp("2026-10-05T12:34:5あZ"), None);
-        assert_eq!(parse_timestamp("2026-10-05T12:34:56+0あ:00"), None);
         assert_eq!(parse_timestamp("not a time"), None);
         // Out-of-range fields, and a year too wide for the arithmetic.
         assert_eq!(parse_timestamp("2026-02-31T00:00:00Z"), None);
         assert_eq!(parse_timestamp("2026-10-05T99:99:99Z"), None);
         assert_eq!(parse_timestamp("2026-10-05T12:34:5612Z"), None);
         assert_eq!(parse_timestamp("2026-10-05T12:34:56.Z"), None);
-        assert_eq!(parse_timestamp("2026-10-05T12:34:56+24:00"), None);
+        assert_eq!(parse_timestamp("2026-13-05T12:34:56Z"), None);
+        assert_eq!(parse_timestamp("1969-12-31T23:59:59Z"), None);
         assert_eq!(parse_timestamp("9999999999999999-01-01T00:00:00Z"), None);
         assert!(parse_timestamp("2024-02-29T00:00:00Z").is_some());
     }

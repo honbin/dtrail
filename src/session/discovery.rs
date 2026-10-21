@@ -213,8 +213,8 @@ pub(crate) fn last_active(path: &Path) -> Option<SystemTime> {
     last_record_timestamp(path).or_else(|| fs::metadata(path).and_then(|m| m.modified()).ok())
 }
 
-/// Reads only a window at the end of the file, widening it until a timestamped
-/// line is found: a single tool result can outgrow any fixed window.
+/// Reads only a window at the end of the file, widening it until a line with a
+/// timestamp is found: a single tool result can outgrow any fixed window.
 fn last_record_timestamp(path: &Path) -> Option<SystemTime> {
     const FIRST_WINDOW: u64 = 16 * 1024;
     let mut file = fs::File::open(path).ok()?;
@@ -235,14 +235,22 @@ fn last_record_timestamp(path: &Path) -> Option<SystemTime> {
                 .map_or(&[][..], |i| &bytes[i + 1..])
         };
         // Relies on file order being chronological (see `Session`), so the
-        // lines before the last timestamped one need not be parsed.
-        let newest = String::from_utf8_lossy(lines)
+        // last line with a timestamp decides. One that doesn't parse (or isn't a
+        // string) falls back to the mtime rather than to an older line, so a
+        // changed format costs one window, not a read of the whole file.
+        let last = String::from_utf8_lossy(lines)
             .lines()
             .rev()
             .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
-            .find_map(|v| parse_timestamp(v.get("timestamp")?.as_str()?));
-        if newest.is_some() || start == 0 {
-            return newest;
+            .find_map(|v| {
+                v.get("timestamp")
+                    .map(|t| t.as_str().and_then(parse_timestamp))
+            });
+        if let Some(time) = last {
+            return time;
+        }
+        if start == 0 {
+            return None;
         }
         window *= 4;
     }
@@ -501,18 +509,50 @@ mod tests {
 
         let untimed = tmp.join("untimed.jsonl");
         fs::write(&untimed, "{\"role\":\"user\"}\n").unwrap();
-        let mtime = fs::metadata(&untimed).unwrap().modified().unwrap();
+        let untimed_mtime = fs::metadata(&untimed).unwrap().modified().unwrap();
+
+        // A last timestamp in an unreadable format: the mtime, not the older line.
+        let unread = tmp.join("unread.jsonl");
+        fs::write(
+            &unread,
+            concat!(
+                r#"{"type":"user","timestamp":"2026-01-03T00:00:00Z"}"#,
+                "\n",
+                r#"{"type":"user","timestamp":"2026-01-03T09:00:00+09:00"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let unread_mtime = fs::metadata(&unread).unwrap().modified().unwrap();
+
+        // Likewise a timestamp that isn't a string.
+        let numeric = tmp.join("numeric.jsonl");
+        fs::write(
+            &numeric,
+            concat!(
+                r#"{"type":"user","timestamp":"2026-01-04T00:00:00Z"}"#,
+                "\n",
+                r#"{"type":"user","timestamp":1767484800000}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let numeric_mtime = fs::metadata(&numeric).unwrap().modified().unwrap();
 
         let results = (
             last_active(&touched),
             last_active(&big),
             last_active(&untimed),
+            last_active(&unread),
+            last_active(&numeric),
         );
         fs::remove_dir_all(&tmp).ok();
 
         assert_eq!(results.0, Some(at("2026-01-01T00:05:00Z")));
         assert_eq!(results.1, Some(at("2026-01-02T01:00:00Z")));
-        assert_eq!(results.2, Some(mtime));
+        assert_eq!(results.2, Some(untimed_mtime));
+        assert_eq!(results.3, Some(unread_mtime));
+        assert_eq!(results.4, Some(numeric_mtime));
     }
 
     #[cfg(unix)]
