@@ -210,12 +210,12 @@ fn agent_of_file(path: &Path) -> Option<Agent> {
 /// file without adding a record, which would lift an idle session to the top of
 /// the list.
 pub(crate) fn last_active(path: &Path) -> Option<SystemTime> {
-    last_record_timestamp(path).or_else(|| fs::metadata(path).and_then(|m| m.modified()).ok())
+    last_record_time(path).or_else(|| fs::metadata(path).and_then(|m| m.modified()).ok())
 }
 
 /// Reads only a window at the end of the file, widening it until a line with a
 /// timestamp is found: a single tool result can outgrow any fixed window.
-fn last_record_timestamp(path: &Path) -> Option<SystemTime> {
+fn last_record_time(path: &Path) -> Option<SystemTime> {
     const FIRST_WINDOW: u64 = 16 * 1024;
     let mut file = fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
@@ -473,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn last_active_is_the_newest_record_not_the_mtime() {
+    fn last_active_is_the_last_record_not_the_mtime() {
         let tmp = std::env::temp_dir().join(format!("dtrail-active-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
         let at = |ts: &str| parse_timestamp(ts).unwrap();

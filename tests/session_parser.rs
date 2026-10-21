@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use dtrail::session::claude;
 use dtrail::session::model::{Block, RecordKind, Session, ToolResultContent};
 
-fn tool_uses(sess: &Session) -> HashMap<&str, &str> {
+fn tool_use_names(sess: &Session) -> HashMap<&str, &str> {
     sess.records
         .iter()
         .filter_map(|r| match &r.kind {
@@ -81,14 +81,14 @@ fn extracts_user_string_and_assistant_blocks() {
 #[test]
 fn tool_use_and_result_keep_their_ids() {
     let (sess, _) = claude::parse(&fixture());
-    assert_eq!(tool_uses(&sess).get("toolu_1"), Some(&"Bash"));
+    assert_eq!(tool_use_names(&sess).get("toolu_1"), Some(&"Bash"));
     assert!(tool_result_ids(&sess).contains(&"toolu_1"));
 }
 
 #[test]
 fn an_orphan_tool_result_keeps_its_unmatched_id() {
     let (sess, _) = claude::parse(&fixture());
-    assert!(!tool_uses(&sess).contains_key("toolu_err"));
+    assert!(!tool_use_names(&sess).contains_key("toolu_err"));
     assert!(tool_result_ids(&sess).contains(&"toolu_err"));
 }
 

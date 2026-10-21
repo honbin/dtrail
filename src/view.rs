@@ -188,7 +188,7 @@ impl<'a> Builder<'a> {
                 self.user_line(line);
             }
             let region = lines[r.start..=r.end].join("\n");
-            self.counted(
+            self.text_fold(
                 Role::UserTag,
                 Role::UserText,
                 &format!("<{}>", r.name),
@@ -222,7 +222,7 @@ impl<'a> Builder<'a> {
     }
 
     /// A fold whose searchable text is its body, under a `name [N lines]` header.
-    fn counted(&mut self, header: Role, body: Role, name: &str, text: &str) {
+    fn text_fold(&mut self, header: Role, body: Role, name: &str, text: &str) {
         let (id, expanded) = self.next_fold(|| text.to_string());
         self.header(
             header,
@@ -274,7 +274,7 @@ impl<'a> Builder<'a> {
 
     fn system(&mut self, subtype: Option<&str>, text: &str) {
         let name = subtype.unwrap_or("system");
-        self.counted(Role::System, Role::System, name, text);
+        self.text_fold(Role::System, Role::System, name, text);
     }
 
     fn tool_use(&mut self, name: &str, input: &serde_json::Value) {
@@ -308,7 +308,7 @@ impl<'a> Builder<'a> {
     }
 
     fn thinking(&mut self, text: &str) {
-        self.counted(Role::Thinking, Role::Thinking, "thinking", text);
+        self.text_fold(Role::Thinking, Role::Thinking, "thinking", text);
     }
 }
 
@@ -383,13 +383,13 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Fold {
         Collapsed,
-        All,
+        Expanded,
     }
 
     fn rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
         let expanded = match fold {
             Fold::Collapsed => HashSet::new(),
-            Fold::All => (0..fold_item_texts(session).len()).collect(),
+            Fold::Expanded => (0..fold_item_texts(session).len()).collect(),
         };
         build_rows(session, &expanded, width)
     }
@@ -404,7 +404,7 @@ mod tests {
         );
         let (session, _) = crate::session::claude::parse(jsonl);
         let texts = fold_item_texts(&session);
-        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::All, 100)
+        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::Expanded, 100)
             .iter()
             .filter_map(|r| r.fold)
             .collect();
@@ -439,7 +439,7 @@ mod tests {
             vec!["▸ developer [3 lines]", "one line"]
         );
         assert_eq!(
-            codex_rows(jsonl, Fold::All),
+            codex_rows(jsonl, Fold::Expanded),
             vec![
                 "▾ developer [3 lines]",
                 "<instructions>",
@@ -461,7 +461,7 @@ mod tests {
         let item = |t: &str| format!(r#"{{"type":"response_item","payload":{{"type":"{t}"}}}}"#);
         let jsonl = [item("x"), item("x"), item("x"), item("y"), item("x")].join("\n");
         assert_eq!(
-            codex_rows(&jsonl, Fold::All),
+            codex_rows(&jsonl, Fold::Expanded),
             vec![
                 "[unknown block: x] ×3",
                 "[unknown block: y]",
@@ -482,7 +482,7 @@ mod tests {
     #[test]
     fn a_tag_region_in_user_text_starts_folded() {
         let text = "see below\n<ctx kind=\"x\">\n  a\n  b\n</ctx>\nthanks";
-        let roles: Vec<Role> = rows(&user_text_session(text), Fold::All, 80)
+        let roles: Vec<Role> = rows(&user_text_session(text), Fold::Expanded, 80)
             .iter()
             .map(|r| r.role)
             .collect();
@@ -493,7 +493,7 @@ mod tests {
             vec!["● user", "see below", "▸ <ctx> [4 lines]", "thanks"]
         );
         assert_eq!(
-            user_text_rows(text, Fold::All),
+            user_text_rows(text, Fold::Expanded),
             vec![
                 "● user",
                 "see below",
@@ -557,7 +557,7 @@ mod tests {
             vec!["● user", "▸ <A> [3 lines]", "▸ <b> [2 lines]"]
         );
         assert_eq!(
-            user_text_rows(text, Fold::All),
+            user_text_rows(text, Fold::Expanded),
             vec![
                 "● user",
                 "▾ <A> [3 lines]",
@@ -587,7 +587,7 @@ mod tests {
         let (session, _) = crate::session::claude::parse(jsonl);
         let texts = fold_item_texts(&session);
         assert_eq!(texts, vec!["<a>\nx\n</a>", "<b>\ny\n</b>", "hmm"]);
-        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::All, 100)
+        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::Expanded, 100)
             .iter()
             .filter_map(|r| r.fold)
             .collect();
@@ -614,7 +614,7 @@ mod tests {
         assert!(texts[2].starts_with("Bash "));
         assert_eq!(texts[3], "out");
         assert_eq!(texts[4], "a\nb");
-        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::All, 100)
+        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::Expanded, 100)
             .iter()
             .filter_map(|r| r.fold)
             .collect();
@@ -631,7 +631,7 @@ mod tests {
         );
         let (session, _) = crate::session::claude::parse(jsonl);
         assert_eq!(
-            row_texts(&session, Fold::All),
+            row_texts(&session, Fold::Expanded),
             vec!["[unknown block: x]", "● user", "[unknown block: x]"]
         );
     }
@@ -686,7 +686,7 @@ mod tests {
         let line =
             r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"a\n"}]}}"#;
         let (session, _) = crate::session::claude::parse(line);
-        let rows = rows(&session, Fold::All, 80);
+        let rows = rows(&session, Fold::Expanded, 80);
         assert_eq!(rows[0].text, "▾ thinking [2 lines]");
         assert_eq!(rows.len() - 1, 2);
     }
@@ -711,7 +711,7 @@ mod tests {
             r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"before"}}]}}}}
 {{"type":"user","message":{{"content":{content}}}}}"#
         );
-        row_texts(&crate::session::claude::parse(&jsonl).0, Fold::All)
+        row_texts(&crate::session::claude::parse(&jsonl).0, Fold::Expanded)
     }
 
     #[test]
