@@ -9,6 +9,23 @@ pub fn display_width(s: &str) -> usize {
     s.width()
 }
 
+/// Each char together with the zero-width chars after it (combining marks such
+/// as NFD Japanese voiced marks, VS16), measured as one string. A zero-width
+/// char can change its base's width (VS16 widens some emoji), so a lone char's
+/// width isn't the cluster's, and breaking inside a cluster splits a glyph.
+fn clusters(s: &str) -> impl Iterator<Item = (&str, usize)> {
+    let mut starts = s
+        .char_indices()
+        .filter(|&(i, c)| i == 0 || c.width().unwrap_or(0) > 0)
+        .map(|(i, _)| i)
+        .peekable();
+    std::iter::from_fn(move || {
+        let start = starts.next()?;
+        let cluster = &s[start..starts.peek().copied().unwrap_or(s.len())];
+        Some((cluster, cluster.width()))
+    })
+}
+
 /// Truncate to at most `width` display columns.
 pub fn clip_to_width(s: &str, width: usize) -> String {
     if s.width() <= width {
@@ -16,12 +33,11 @@ pub fn clip_to_width(s: &str, width: usize) -> String {
     }
     let mut out = String::new();
     let mut w = 0;
-    for ch in s.chars() {
-        let cw = ch.width().unwrap_or(0).max(1);
+    for (cluster, cw) in clusters(s) {
         if w + cw > width {
             break;
         }
-        out.push(ch);
+        out.push_str(cluster);
         w += cw;
     }
     out
@@ -42,13 +58,12 @@ pub fn wrap_line(text: &str, width: usize) -> Vec<String> {
     let mut current = String::new();
     let mut current_width = 0usize;
 
-    for ch in text.chars() {
-        let w = ch.width().unwrap_or(0).max(1);
+    for (cluster, w) in clusters(text) {
         if current_width + w > width && !current.is_empty() {
             lines.push(std::mem::take(&mut current));
             current_width = 0;
         }
-        current.push(ch);
+        current.push_str(cluster);
         current_width += w;
     }
     if !current.is_empty() || lines.is_empty() {
@@ -174,5 +189,30 @@ mod tests {
         let text = sanitize_display("ab\u{202E}");
         assert_eq!(display_width(&text), 10);
         assert_eq!(wrap_line(&text, 5), vec!["ab‹U+", "202E›"]);
+    }
+
+    #[test]
+    fn combining_marks_take_no_column_but_vs16_widens() {
+        // NFD "が" ×5: each base kana plus a separate voiced mark, 10 columns.
+        let nfd = "か\u{3099}".repeat(5);
+        assert_eq!(wrap_line(&nfd, 10), vec![nfd.clone()]);
+        assert_eq!(clip_to_width(&format!("{nfd}x"), 10), nfd);
+        // "❤️" is two columns though its base char alone is one, so nothing
+        // after it fits in three, and it moves down whole rather than split.
+        let heart = "\u{2764}\u{FE0F}";
+        assert_eq!(clip_to_width(&format!("a{heart}b"), 3), format!("a{heart}"));
+        assert_eq!(
+            wrap_line(&format!("a{heart}b"), 3),
+            vec![format!("a{heart}"), "b".into()]
+        );
+        assert_eq!(
+            wrap_line(&format!("ab{heart}"), 3),
+            vec!["ab".to_string(), heart.to_string()]
+        );
+        // VS16 after a wide emoji or a letter adds no column.
+        let grin = "\u{1F600}\u{FE0F}";
+        assert_eq!(wrap_line(grin, 2), vec![grin]);
+        assert_eq!(wrap_line("a\u{FE0F}", 1), vec!["a\u{FE0F}"]);
+        assert_eq!(clip_to_width(&format!("{grin}xy"), 3), format!("{grin}x"));
     }
 }
