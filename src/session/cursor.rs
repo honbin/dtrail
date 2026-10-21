@@ -25,7 +25,7 @@ fn base_dir() -> PathBuf {
     PathBuf::from(home).join(".cursor").join("projects")
 }
 
-/// All Cursor sessions, newest first. Unreadable dirs/files are skipped.
+/// All Cursor sessions, unordered. Unreadable dirs/files are skipped.
 pub fn discover() -> Vec<SessionEntry> {
     discover_in(&base_dir())
 }
@@ -82,17 +82,15 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
     let mut preview = PreviewPicker::default();
     for value in values {
         match value.get("role").and_then(Value::as_str) {
-            Some("user") => {}
-            Some("assistant") => {
-                preview.reply_seen();
-                continue;
+            Some("user") => {
+                if let Some(text) = preview_text(&value) {
+                    preview.offer(text);
+                }
             }
-            _ => continue,
+            Some("assistant") => preview.reply_seen(),
+            _ => {}
         }
-        let Some(text) = preview_text(&value) else {
-            continue;
-        };
-        if preview.offer(text) {
+        if preview.has_summary() {
             break;
         }
     }
@@ -148,8 +146,6 @@ fn parse_record(value: &Value) -> Option<Record> {
         other => other_role(other, content),
     };
     Some(Record {
-        uuid: None,
-        parent_uuid: None,
         timestamp: None,
         kind,
     })

@@ -108,15 +108,11 @@ impl Scroll {
     pub fn restore(&mut self, cursor: usize, offset: usize, len: usize) {
         self.cursor = cursor;
         self.offset = offset;
-        self.clamp_cursor(len);
-        self.scroll_into_view(len, 0);
+        self.reclamp(len);
     }
 
     fn clamp_cursor(&mut self, len: usize) {
-        let max = len.saturating_sub(1);
-        if self.cursor > max {
-            self.cursor = max;
-        }
+        self.cursor = self.cursor.min(len.saturating_sub(1));
     }
 
     fn scroll_into_view(&mut self, len: usize, scrolloff: usize) {

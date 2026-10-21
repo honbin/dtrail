@@ -27,7 +27,7 @@ fn base_dir() -> PathBuf {
     PathBuf::from(home).join(".claude").join("projects")
 }
 
-/// All Claude sessions, newest first. Unreadable dirs/files are skipped.
+/// All Claude sessions, unordered. Unreadable dirs/files are skipped.
 pub fn discover() -> Vec<SessionEntry> {
     discover_in(&base_dir())
 }
@@ -152,14 +152,6 @@ fn parse_record(value: &Value) -> Option<Record> {
     };
 
     Some(Record {
-        uuid: value
-            .get("uuid")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        parent_uuid: value
-            .get("parentUuid")
-            .and_then(Value::as_str)
-            .map(str::to_string),
         timestamp: value
             .get("timestamp")
             .and_then(Value::as_str)
@@ -168,7 +160,6 @@ fn parse_record(value: &Value) -> Option<Record> {
     })
 }
 
-/// `message.content`: either a string or an array of blocks.
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -23,8 +23,6 @@ pub struct Session {
 
 #[derive(Debug, Clone)]
 pub struct Record {
-    pub uuid: Option<String>,
-    pub parent_uuid: Option<String>,
     pub timestamp: Option<String>,
     pub kind: RecordKind,
 }
@@ -48,6 +46,8 @@ pub enum Block {
     Text(String),
     Thinking(String),
     ToolUse {
+        /// Kept as recorded though the view doesn't read it yet: it is what a
+        /// result would be matched to its tool use by (`tool_use_id`).
         id: String,
         name: String,
         /// Kept as raw JSON since input shape varies per tool.
@@ -116,21 +116,5 @@ impl Session {
     /// First record timestamp (ISO8601, as recorded), if any.
     pub fn first_timestamp(&self) -> Option<&str> {
         self.records.iter().find_map(|r| r.timestamp.as_deref())
-    }
-
-    /// Index tool_use id -> (record_index, block_index).
-    /// Exact id match only; results are never linked by guesswork.
-    pub fn tool_use_index(&self) -> std::collections::HashMap<String, (usize, usize)> {
-        let mut map = std::collections::HashMap::new();
-        for (ri, rec) in self.records.iter().enumerate() {
-            if let RecordKind::Assistant(blocks) = &rec.kind {
-                for (bi, block) in blocks.iter().enumerate() {
-                    if let Block::ToolUse { id, .. } = block {
-                        map.insert(id.clone(), (ri, bi));
-                    }
-                }
-            }
-        }
-        map
     }
 }

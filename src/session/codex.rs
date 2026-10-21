@@ -6,12 +6,13 @@
 //! `event_msg` stream is a UI duplicate and is ignored). Items map onto the
 //! shared model: message -> user/assistant text, reasoning -> thinking,
 //! function/custom tool calls and their outputs -> tool use / tool result,
-//! linked by `call_id`.
+//! which share a `call_id`.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::content::str_field;
 use super::discovery::{
     Agent, PreviewPicker, SessionEntry, json_lines, last_active, session_id_from_stem,
 };
@@ -28,7 +29,7 @@ fn base_dir() -> PathBuf {
     PathBuf::from(home).join(".codex").join("sessions")
 }
 
-/// All Codex sessions, newest first. Unreadable dirs/files are skipped.
+/// All Codex sessions, unordered. Unreadable dirs/files are skipped.
 pub fn discover() -> Vec<SessionEntry> {
     discover_in(&base_dir())
 }
@@ -67,14 +68,16 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
                 }
             }
             Some("response_item") if !preview.has_summary() => {
-                let payload = value.get("payload");
-                let is_message =
-                    payload.and_then(|p| p.get("type")).and_then(Value::as_str) == Some("message");
-                let role = payload.and_then(|p| p.get("role")).and_then(Value::as_str);
-                if is_message && role == Some("user") && !is_injected_context(payload.unwrap()) {
-                    preview.offer(message_text(payload.unwrap()));
-                } else if is_message && role == Some("assistant") {
-                    preview.reply_seen();
+                if let Some(p) = value.get("payload")
+                    && p.get("type").and_then(Value::as_str) == Some("message")
+                {
+                    match p.get("role").and_then(Value::as_str) {
+                        Some("user") if !is_injected_context(p) => {
+                            preview.offer(message_text(p));
+                        }
+                        Some("assistant") => preview.reply_seen(),
+                        _ => {}
+                    }
                 }
             }
             _ => {}
@@ -121,12 +124,7 @@ pub fn parse(input: &str) -> (Session, ParseStats) {
             .map(str::to_string);
 
         if let Some(kind) = record_kind(payload) {
-            session.records.push(Record {
-                uuid: None,
-                parent_uuid: None,
-                timestamp,
-                kind,
-            });
+            session.records.push(Record { timestamp, kind });
         }
     })
 }
@@ -213,30 +211,25 @@ fn is_injected_context(payload: &Value) -> bool {
 
 /// Concatenate the text of a message's content parts (`input_text`/`output_text`).
 fn message_text(payload: &Value) -> String {
-    payload
-        .get("content")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|it| it.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("")
-        })
-        .unwrap_or_default()
+    joined_texts(payload, "content", "")
 }
 
 /// Reasoning items carry human-readable text under `summary[].text`.
 fn reasoning_text(payload: &Value) -> String {
+    joined_texts(payload, "summary", "\n")
+}
+
+/// The `text` of each part in the array under `key`, joined by `sep`.
+fn joined_texts(payload: &Value, key: &str, sep: &str) -> String {
     payload
-        .get("summary")
+        .get(key)
         .and_then(Value::as_array)
         .map(|items| {
             items
                 .iter()
                 .filter_map(|it| it.get("text").and_then(Value::as_str))
                 .collect::<Vec<_>>()
-                .join("\n")
+                .join(sep)
         })
         .unwrap_or_default()
 }
@@ -255,18 +248,27 @@ fn output_text(payload: &Value) -> String {
     }
 }
 
-fn str_field(payload: &Value, key: &str) -> String {
-    payload
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Tool-use ids and tool-result ids, each in file order.
+    fn tool_ids(session: &Session) -> (Vec<&str>, Vec<&str>) {
+        let blocks = session.records.iter().flat_map(|r| match &r.kind {
+            RecordKind::Assistant(b) | RecordKind::User(b) => b.as_slice(),
+            _ => &[],
+        });
+        let mut ids = (Vec::new(), Vec::new());
+        for b in blocks {
+            match b {
+                Block::ToolUse { id, .. } => ids.0.push(id.as_str()),
+                Block::ToolResult { tool_use_id, .. } => ids.1.push(tool_use_id.as_str()),
+                _ => {}
+            }
+        }
+        ids
+    }
 
     const SAMPLE: &str = concat!(
         r#"{"type":"session_meta","timestamp":"2026-10-02T16:30:56Z","payload":{"cwd":"/Users/me/proj","session_id":"sid-1"}}"#,
@@ -295,9 +297,7 @@ mod tests {
         // user message, reasoning, tool_use, tool_result, assistant message.
         assert_eq!(session.records.len(), 5);
 
-        // tool_use and tool_result link by call_id.
-        let index = session.tool_use_index();
-        assert!(index.contains_key("c1"));
+        assert_eq!(tool_ids(&session), (vec!["c1"], vec!["c1"]));
 
         // reasoning became thinking; assistant text present.
         let has_thinking = session.records.iter().any(|r| {
@@ -317,8 +317,7 @@ mod tests {
             "\n",
         );
         let (session, _) = parse(jsonl);
-        // The shell call is a tool use its output links to.
-        assert!(session.tool_use_index().contains_key("c2"));
+        assert_eq!(tool_ids(&session), (vec!["c2"], vec!["c2"]));
         assert!(matches!(
             &session.records[2].kind,
             RecordKind::Assistant(b) if matches!(&b[0], Block::Unknown { block_type } if block_type == "image_generation_call")

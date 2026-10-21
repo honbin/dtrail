@@ -263,7 +263,7 @@ mod tests {
         let jsonl = format!(
             r#"{{"type":"user","sessionId":"s","message":{{"role":"user","content":"{content}"}}}}"#
         );
-        let mut app = App::with_session(claude::parse(&jsonl).0);
+        let mut app = App::with_session(claude::parse(&jsonl));
         app.conversation_mut().unwrap().sync_viewport(80, 10);
         app
     }
@@ -426,7 +426,7 @@ mod tests {
             r#"{"type":"user","sessionId":"s","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"one\ntwo"}]}}"#,
             "\n",
         );
-        let mut app = App::with_session(claude::parse(jsonl).0);
+        let mut app = App::with_session(claude::parse(jsonl));
         app.conversation_mut().unwrap().sync_viewport(80, 20);
         let mut input = InputState::default();
 

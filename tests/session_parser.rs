@@ -1,8 +1,40 @@
-//! Parser tests: message extraction, tool_use/tool_result linking, unknown
+//! Parser tests: message extraction, tool_use/tool_result ids, unknown
 //! events, and tolerance of incomplete records.
 
+use std::collections::HashMap;
+
 use dtrail::session::claude;
-use dtrail::session::model::{Block, RecordKind, ToolResultContent};
+use dtrail::session::model::{Block, RecordKind, Session, ToolResultContent};
+
+fn tool_uses(sess: &Session) -> HashMap<&str, &str> {
+    sess.records
+        .iter()
+        .filter_map(|r| match &r.kind {
+            RecordKind::Assistant(blocks) => Some(blocks),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|b| match b {
+            Block::ToolUse { id, name, .. } => Some((id.as_str(), name.as_str())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn tool_result_ids(sess: &Session) -> Vec<&str> {
+    sess.records
+        .iter()
+        .filter_map(|r| match &r.kind {
+            RecordKind::User(blocks) => Some(blocks),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|b| match b {
+            Block::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+            _ => None,
+        })
+        .collect()
+}
 
 fn fixture() -> String {
     std::fs::read_to_string(concat!(
@@ -47,39 +79,17 @@ fn extracts_user_string_and_assistant_blocks() {
 }
 
 #[test]
-fn links_tool_use_and_result_by_id() {
+fn tool_use_and_result_keep_their_ids() {
     let (sess, _) = claude::parse(&fixture());
-    let index = sess.tool_use_index();
-
-    // toolu_1's tool_use is indexed and its name is recoverable.
-    let (ri, bi) = index.get("toolu_1").copied().expect("toolu_1 indexed");
-    match &sess.records[ri].kind {
-        RecordKind::Assistant(blocks) => match &blocks[bi] {
-            Block::ToolUse { name, .. } => assert_eq!(name, "Bash"),
-            other => panic!("expected tool_use, got {other:?}"),
-        },
-        other => panic!("expected assistant, got {other:?}"),
-    }
-
-    // The matching tool_result is reachable by id.
-    let has_matching_result = sess.records.iter().any(|r| match &r.kind {
-        RecordKind::User(b) => b.iter().any(|x| {
-            matches!(
-                x,
-                Block::ToolResult { tool_use_id, .. } if index.contains_key(tool_use_id)
-            )
-        }),
-        _ => false,
-    });
-    assert!(has_matching_result);
+    assert_eq!(tool_uses(&sess).get("toolu_1"), Some(&"Bash"));
+    assert!(tool_result_ids(&sess).contains(&"toolu_1"));
 }
 
 #[test]
-fn orphan_tool_result_is_not_force_linked() {
+fn an_orphan_tool_result_keeps_its_unmatched_id() {
     let (sess, _) = claude::parse(&fixture());
-    let index = sess.tool_use_index();
-    // toolu_err has no matching tool_use (never linked by guesswork).
-    assert!(!index.contains_key("toolu_err"));
+    assert!(!tool_uses(&sess).contains_key("toolu_err"));
+    assert!(tool_result_ids(&sess).contains(&"toolu_err"));
 }
 
 #[test]

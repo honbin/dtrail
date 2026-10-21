@@ -226,8 +226,7 @@ fn conversation_search_is_retained_after_confirm_and_prefilled_next_time() {
         r#"{"type":"assistant","sessionId":"s","message":{"content":[{"type":"text","text":"needle again"}]}}"#,
         "\n",
     );
-    let (session, _) = claude::parse(jsonl);
-    let mut app = App::with_session(session);
+    let mut app = App::with_session(claude::parse(jsonl));
     app.conversation_mut().unwrap().sync_viewport(80, 20);
 
     app.start_search();
@@ -264,7 +263,7 @@ fn conversation_search_does_not_move_until_confirmed() {
     let jsonl = format!(
         r#"{{"type":"user","sessionId":"s","message":{{"role":"user","content":"{content}"}}}}"#
     );
-    let mut app = App::with_session(claude::parse(&jsonl).0);
+    let mut app = App::with_session(claude::parse(&jsonl));
     app.conversation_mut().unwrap().sync_viewport(80, 10);
     let start = app.conversation().unwrap().cursor();
     let rows = app.conversation().unwrap().total_rows();

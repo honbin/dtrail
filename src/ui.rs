@@ -329,10 +329,7 @@ fn status_text(app: &App) -> (String, &'static str) {
 
 fn conversation_status_left(view: &ConversationView) -> String {
     let total = view.total_rows();
-    let pos = (view.cursor() + 1)
-        .checked_mul(100)
-        .and_then(|n| n.checked_div(total.max(1)))
-        .unwrap_or(0);
+    let pos = (view.cursor() + 1) * 100 / total.max(1);
     let when = view.started_at().map(format_timestamp).unwrap_or_default();
     let sid = view.session_id().unwrap_or("(unknown)");
     let partial = view.partial_of().map_or(String::new(), |total| {

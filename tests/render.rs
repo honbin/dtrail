@@ -30,7 +30,7 @@ fn fixture_session() -> App {
         "/tests/fixtures/minimal-session.jsonl"
     ))
     .unwrap();
-    App::with_session(claude::parse(&jsonl).0)
+    App::with_session(claude::parse(&jsonl))
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn the_status_line_sanitizes_a_malicious_session_id() {
     // terminal raw via the status line.
     let jsonl =
         r#"{"type":"user","sessionId":"\u001b[31mBAD","message":{"role":"user","content":"hi"}}"#;
-    let mut app = App::with_session(claude::parse(jsonl).0);
+    let mut app = App::with_session(claude::parse(jsonl));
     let out = render(&mut app);
     assert!(
         !out.contains('\u{1b}'),

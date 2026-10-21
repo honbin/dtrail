@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use crate::scroll::Scroll;
 use crate::session::Session;
-use crate::view::{self, Fold, Row, build_rows};
+use crate::view::{self, Row, build_rows};
 
 /// Rows of context kept above and below a search match so it never lands on an
 /// edge. Plain cursor movement uses no scrolloff (the cursor reaches the edges).
@@ -158,19 +158,16 @@ impl ConversationView {
     fn rebuild(&mut self, width: u16) {
         // Reveal items that contain a match so folded tool output is searchable;
         // the user's own fold state is left untouched.
-        let effective = if self.search_query.is_empty() {
-            self.expanded.clone()
-        } else {
-            let mut set = self.expanded.clone();
-            set.extend(
+        let mut effective = self.expanded.clone();
+        if !self.search_query.is_empty() {
+            effective.extend(
                 self.fold_ids_containing_match()
                     .into_iter()
                     .filter(|id| !self.collapsed.contains(id)),
             );
-            set
-        };
+        }
         if self.rows.is_empty() || width != self.rows_width || effective != self.last_effective {
-            self.rows = build_rows(&self.session, Fold::Ids(&effective), width);
+            self.rows = build_rows(&self.session, &effective, width);
             self.rows_width = width;
             self.last_effective = effective;
         }
@@ -363,11 +360,13 @@ impl ConversationView {
             return;
         }
         let q = self.search_query.to_lowercase();
-        for (i, row) in self.rows.iter().enumerate() {
-            if row.text.to_lowercase().contains(&q) {
-                self.matches.push(i);
-            }
-        }
+        self.matches.extend(
+            self.rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.text.to_lowercase().contains(&q))
+                .map(|(i, _)| i),
+        );
         if self.match_cursor >= self.matches.len() {
             self.match_cursor = 0;
         }

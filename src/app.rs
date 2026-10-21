@@ -8,6 +8,7 @@
 use crate::conversation::ConversationView;
 use crate::scroll::Scroll;
 use crate::session::discovery;
+use crate::session::model::ParseStats;
 use crate::session::{Agent, Session, SessionEntry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,34 +92,16 @@ impl App {
         }
     }
 
-    /// Start with one session already open (path given on the command line).
-    pub fn with_session(session: Session) -> Self {
+    /// Start with one session already open (path given on the command line),
+    /// as [`discovery::load`] returns it.
+    pub fn with_session(loaded: (Session, ParseStats)) -> Self {
         Self {
-            entries: Vec::new(),
-            filtered: Vec::new(),
-            filter_query: String::new(),
-            agent_filter: None,
-            prose_only: false,
-            list: Scroll::default(),
-            conversation: Some(ConversationView::new(session)),
-            loaded_index: None,
-            pending_full_load: false,
+            conversation: Some(open_view(loaded)),
             direct: true,
             focus: Focus::Conversation,
             maximized: true,
-            mode: Mode::Normal,
-            input_buffer: String::new(),
-            notice: None,
-            should_quit: false,
+            ..Self::with_entries(Vec::new())
         }
-    }
-
-    /// Record how many unparseable lines the open session had, for the status line.
-    pub fn with_skipped_lines(mut self, n: usize) -> Self {
-        if let Some(view) = self.conversation.as_mut() {
-            view.set_skipped_lines(n);
-        }
-        self
     }
 
     pub fn focus(&self) -> Focus {
@@ -184,12 +167,10 @@ impl App {
 
     /// Dive from the list into the conversation: focus it and read full-width.
     pub fn dive_into_conversation(&mut self) {
-        if self.conversation.is_none() {
-            return;
+        if self.conversation.is_some() {
+            self.maximized = true;
+            self.focus_conversation();
         }
-        self.focus = Focus::Conversation;
-        self.maximized = true;
-        self.enter_conversation();
     }
 
     /// Reading needs the whole session: a head-only view is reloaded in full,
@@ -211,12 +192,8 @@ impl App {
             return false;
         }
         let entry = self.loaded_index.and_then(|i| self.entries.get(i));
-        if let Some((session, stats)) =
-            entry.and_then(|e| discovery::load(&e.path, Some(e.agent)).ok())
-        {
-            let mut view = ConversationView::new(session);
-            view.set_skipped_lines(stats.skipped_lines);
-            self.conversation = Some(view);
+        if let Some(loaded) = entry.and_then(|e| discovery::load(&e.path, Some(e.agent)).ok()) {
+            self.conversation = Some(open_view(loaded));
         }
         self.clear_notice();
         self.carry_filter_into_search();
@@ -226,11 +203,10 @@ impl App {
     /// Carry the list filter in as a body search so entering the conversation
     /// jumps to that word and `n`/`N` step through its occurrences.
     fn carry_filter_into_search(&mut self) {
-        if !self.filter_query.is_empty() {
-            let q = self.filter_query.clone();
-            if let Some(view) = self.conversation.as_mut() {
-                view.carry_search(&q);
-            }
+        if !self.filter_query.is_empty()
+            && let Some(view) = self.conversation.as_mut()
+        {
+            view.carry_search(&self.filter_query);
         }
     }
 
@@ -292,12 +268,11 @@ impl App {
     /// folds that contain a match and jump to the first.
     pub fn search_confirm(&mut self) {
         self.mode = Mode::Normal;
-        if self.focus == Focus::Conversation {
-            let query = self.input_buffer.clone();
-            if let Some(view) = self.conversation.as_mut() {
-                view.set_search(&query);
-                view.accept_search();
-            }
+        if self.focus == Focus::Conversation
+            && let Some(view) = self.conversation.as_mut()
+        {
+            view.set_search(&self.input_buffer);
+            view.accept_search();
         }
     }
 
@@ -468,9 +443,8 @@ impl App {
             } else {
                 discovery::load(&e.path, Some(e.agent))
             };
-            loaded.ok().map(|(session, stats)| {
-                let mut view = ConversationView::new(session);
-                view.set_skipped_lines(stats.skipped_lines);
+            loaded.ok().map(|loaded| {
+                let mut view = open_view(loaded);
                 if head_only {
                     view.set_partial(size);
                 }
@@ -502,13 +476,11 @@ impl App {
             })
             .map(|(i, _)| i)
             .collect();
-        let kept = current
+        let pos = current
             .filter(|_| !to_first_match)
-            .and_then(|idx| self.filtered.iter().position(|&i| i == idx));
-        self.list.restore(0, 0, self.filtered.len());
-        if let Some(pos) = kept {
-            self.list.jump_to(pos, self.filtered.len(), 0);
-        }
+            .and_then(|idx| self.filtered.iter().position(|&i| i == idx))
+            .unwrap_or(0);
+        self.list.restore(pos, 0, self.filtered.len());
     }
 
     pub fn conversation(&self) -> Option<&ConversationView> {
@@ -518,4 +490,11 @@ impl App {
     pub fn conversation_mut(&mut self) -> Option<&mut ConversationView> {
         self.conversation.as_mut()
     }
+}
+
+/// A view of a loaded session, carrying its unparsed-line count for the status line.
+fn open_view((session, stats): (Session, ParseStats)) -> ConversationView {
+    let mut view = ConversationView::new(session);
+    view.set_skipped_lines(stats.skipped_lines);
+    view
 }

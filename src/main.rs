@@ -22,9 +22,7 @@ fn main() -> ExitCode {
         }
         // A file: open it directly, agent detected from its content.
         Some(path) => match discovery::load(std::path::Path::new(&path), None) {
-            Ok((session, stats)) => {
-                App::with_session(session).with_skipped_lines(stats.skipped_lines)
-            }
+            Ok(loaded) => App::with_session(loaded),
             Err(e) => {
                 eprintln!("cannot read {path}: {e}");
                 return ExitCode::FAILURE;

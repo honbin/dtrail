@@ -299,22 +299,19 @@ pub(crate) struct PreviewPicker {
 }
 
 impl PreviewPicker {
-    /// Returns true once a real prompt is found, so a preview-only scan can stop.
-    pub(crate) fn offer(&mut self, text: String) -> bool {
+    /// The next user utterance. Once a real prompt is found the rest are
+    /// ignored, and a preview-only scan can stop (see [`Self::has_summary`]).
+    pub(crate) fn offer(&mut self, text: String) {
         if self.summary.is_some() {
-            return true;
+            return;
         }
         match prompt_of(&text) {
-            Some(prompt) => {
-                self.summary = Some(prompt);
-                true
-            }
+            Some(prompt) => self.summary = Some(prompt),
             None => {
                 let settled = self.replied && self.raw_user.is_some();
                 if !settled && !text.trim().is_empty() {
                     self.raw_user = Some(text);
                 }
-                false
             }
         }
     }
@@ -395,9 +392,10 @@ mod tests {
     #[test]
     fn a_prompt_after_a_wrapped_paste_is_the_preview() {
         let mut picker = PreviewPicker::default();
-        assert!(picker.offer(
-            "<pasted_content id=\"1\">\nlong paste\n</pasted_content>\n\nreview this".to_string()
-        ));
+        picker.offer(
+            "<pasted_content id=\"1\">\nlong paste\n</pasted_content>\n\nreview this".to_string(),
+        );
+        assert!(picker.has_summary());
         assert_eq!(picker.finish(), "review this");
     }
 

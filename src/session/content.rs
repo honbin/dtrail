@@ -1,4 +1,5 @@
-//! Anthropic message-content helpers, shared by `super::claude` and `super::cursor`.
+//! Message-content helpers: Anthropic content blocks, shared by `super::claude`
+//! and `super::cursor`, and JSON field access shared by every agent.
 
 use serde_json::Value;
 
@@ -9,14 +10,20 @@ pub(crate) fn first_block_text(content: &Value) -> Option<String> {
     content
         .as_array()?
         .iter()
-        .filter_map(|b| {
-            (b.get("type").and_then(Value::as_str) == Some("text"))
-                .then(|| b.get("text").and_then(Value::as_str))
-                .flatten()
-        })
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|b| b.get("text").and_then(Value::as_str))
         .map(str::trim)
         .find(|t| !t.is_empty())
         .map(str::to_string)
+}
+
+/// A string field, or empty when it is missing or not a string.
+pub(crate) fn str_field(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 pub(crate) fn parse_content(content: &Value) -> Vec<Block> {
@@ -30,39 +37,15 @@ pub(crate) fn parse_content(content: &Value) -> Vec<Block> {
 fn parse_block(block: &Value) -> Option<Block> {
     let block_type = block.get("type").and_then(Value::as_str)?;
     let b = match block_type {
-        "text" => Block::Text(
-            block
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        ),
-        "thinking" => Block::Thinking(
-            block
-                .get("thinking")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        ),
+        "text" => Block::Text(str_field(block, "text")),
+        "thinking" => Block::Thinking(str_field(block, "thinking")),
         "tool_use" => Block::ToolUse {
-            id: block
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            name: block
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
+            id: str_field(block, "id"),
+            name: str_field(block, "name"),
             input: block.get("input").cloned().unwrap_or(Value::Null),
         },
         "tool_result" => Block::ToolResult {
-            tool_use_id: block
-                .get("tool_use_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
+            tool_use_id: str_field(block, "tool_use_id"),
             content: parse_tool_result_content(block.get("content")),
             is_error: block
                 .get("is_error")
@@ -90,11 +73,7 @@ fn parse_tool_result_content(content: Option<&Value>) -> ToolResultContent {
                         .and_then(Value::as_str)
                         .unwrap_or("unknown");
                     match t {
-                        "text" => item
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
+                        "text" => str_field(item, "text"),
                         "image" => "[image]".to_string(),
                         other => format!("[{other}]"),
                     }

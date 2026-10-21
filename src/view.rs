@@ -36,31 +36,13 @@ pub struct Row {
     pub continued: bool,
 }
 
-/// Which foldable items are expanded when building rows.
-#[derive(Clone, Copy)]
-pub enum Fold<'a> {
-    /// Only the given ids are expanded (the display state).
-    Ids(&'a HashSet<usize>),
-    /// Every item expanded — used to search the full content.
-    All,
-}
-
-impl Fold<'_> {
-    fn is_expanded(&self, id: usize) -> bool {
-        match self {
-            Fold::Ids(set) => set.contains(&id),
-            Fold::All => true,
-        }
-    }
-}
-
 /// Flatten a session into display rows wrapped to `width`.
 ///
 /// Foldable items (tool input, tool output, thinking, multi-line system text,
 /// tag-delimited regions of user text) are numbered in flatten order; an item's
-/// body rows are emitted only when `fold` expands that id.
-pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
-    let mut b = Builder::new(fold, false);
+/// body rows are emitted only when `expanded` holds that id.
+pub fn build_rows(session: &Session, expanded: &HashSet<usize>, width: u16) -> Vec<Row> {
+    let mut b = Builder::new(expanded, false);
     walk(session, &mut b);
     wrap_rows(b.logical, width.max(1) as usize)
 }
@@ -70,7 +52,7 @@ pub fn build_rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
 /// shares [`walk`] with [`build_rows`] so the ids cannot drift apart.
 pub fn fold_item_texts(session: &Session) -> Vec<String> {
     let collapsed = HashSet::new();
-    let mut b = Builder::new(Fold::Ids(&collapsed), true);
+    let mut b = Builder::new(&collapsed, true);
     walk(session, &mut b);
     b.fold_texts.unwrap_or_default()
 }
@@ -92,10 +74,8 @@ fn walk(session: &Session, b: &mut Builder) {
                     match block {
                         Block::Text(text) => b.user_text(text),
                         Block::ToolResult {
-                            tool_use_id,
-                            content,
-                            is_error,
-                        } => b.tool_result(tool_use_id, content, *is_error),
+                            content, is_error, ..
+                        } => b.tool_result(content, *is_error),
                         Block::Unknown { block_type } => b.unknown(block_type),
                         _ => {}
                     }
@@ -146,7 +126,7 @@ fn system_folds(text: &str) -> bool {
 
 struct Builder<'a> {
     logical: Vec<Row>,
-    fold: Fold<'a>,
+    expanded: &'a HashSet<usize>,
     next_fold_id: usize,
     /// Row index, block type and count of the trailing unknown placeholder.
     unknown_run: Option<(usize, String, usize)>,
@@ -159,10 +139,10 @@ struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn new(fold: Fold<'a>, collect_texts: bool) -> Self {
+    fn new(expanded: &'a HashSet<usize>, collect_texts: bool) -> Self {
         Builder {
             logical: Vec::new(),
-            fold,
+            expanded,
             next_fold_id: 0,
             unknown_run: None,
             fold_texts: collect_texts.then(Vec::new),
@@ -208,16 +188,12 @@ impl<'a> Builder<'a> {
                 self.user_line(line);
             }
             let region = lines[r.start..=r.end].join("\n");
-            let (id, expanded) = self.next_fold(|| region.clone());
-            self.header(
+            self.counted(
                 Role::UserTag,
-                id,
-                expanded,
-                &format!("<{}> [{} lines]", r.name, row_count(&region)),
+                Role::UserText,
+                &format!("<{}>", r.name),
+                &region,
             );
-            if expanded {
-                self.body(Role::UserText, id, &region);
-            }
             next = r.end + 1;
         }
         for line in &lines[next..] {
@@ -242,7 +218,21 @@ impl<'a> Builder<'a> {
         }
         let id = self.next_fold_id;
         self.next_fold_id += 1;
-        (id, self.fold.is_expanded(id))
+        (id, self.expanded.contains(&id))
+    }
+
+    /// A fold whose searchable text is its body, under a `name [N lines]` header.
+    fn counted(&mut self, header: Role, body: Role, name: &str, text: &str) {
+        let (id, expanded) = self.next_fold(|| text.to_string());
+        self.header(
+            header,
+            id,
+            expanded,
+            &format!("{name} [{} lines]", row_count(text)),
+        );
+        if expanded {
+            self.body(body, id, text);
+        }
     }
 
     fn body(&mut self, role: Role, id: usize, text: &str) {
@@ -283,18 +273,8 @@ impl<'a> Builder<'a> {
     }
 
     fn system(&mut self, subtype: Option<&str>, text: &str) {
-        let (id, expanded) = self.next_fold(|| text.to_string());
-        let line_count = row_count(text);
         let name = subtype.unwrap_or("system");
-        self.header(
-            Role::System,
-            id,
-            expanded,
-            &format!("{name} [{line_count} lines]"),
-        );
-        if expanded {
-            self.body(Role::System, id, text);
-        }
+        self.counted(Role::System, Role::System, name, text);
     }
 
     fn tool_use(&mut self, name: &str, input: &serde_json::Value) {
@@ -311,7 +291,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn tool_result(&mut self, _tool_use_id: &str, content: &ToolResultContent, is_error: bool) {
+    fn tool_result(&mut self, content: &ToolResultContent, is_error: bool) {
         let body = content.as_display_string();
         let (id, expanded) = self.next_fold(|| body.clone());
         // An empty result shows no body when unfolded.
@@ -328,17 +308,7 @@ impl<'a> Builder<'a> {
     }
 
     fn thinking(&mut self, text: &str) {
-        let (id, expanded) = self.next_fold(|| text.to_string());
-        let line_count = row_count(text);
-        self.header(
-            Role::Thinking,
-            id,
-            expanded,
-            &format!("thinking [{line_count} lines]"),
-        );
-        if expanded {
-            self.body(Role::Thinking, id, text);
-        }
+        self.counted(Role::Thinking, Role::Thinking, "thinking", text);
     }
 }
 
@@ -393,15 +363,6 @@ fn wrap_rows(logical: Vec<Row>, width: usize) -> Vec<Row> {
     let mut out = Vec::with_capacity(logical.len());
     for r in logical {
         let text = sanitize_display(&r.text);
-        if text.is_empty() {
-            out.push(Row {
-                role: r.role,
-                text,
-                fold: r.fold,
-                continued: false,
-            });
-            continue;
-        }
         for (i, chunk) in wrap_line(&text, width).into_iter().enumerate() {
             out.push(Row {
                 role: r.role,
@@ -418,6 +379,21 @@ fn wrap_rows(logical: Vec<Row>, width: usize) -> Vec<Row> {
 mod tests {
     use super::*;
 
+    /// Which items a test builds expanded: none, or every one.
+    #[derive(Clone, Copy)]
+    enum Fold {
+        Collapsed,
+        All,
+    }
+
+    fn rows(session: &Session, fold: Fold, width: u16) -> Vec<Row> {
+        let expanded = match fold {
+            Fold::Collapsed => HashSet::new(),
+            Fold::All => (0..fold_item_texts(session).len()).collect(),
+        };
+        build_rows(session, &expanded, width)
+    }
+
     #[test]
     fn fold_item_texts_align_with_build_rows_ids() {
         let jsonl = concat!(
@@ -428,7 +404,7 @@ mod tests {
         );
         let (session, _) = crate::session::claude::parse(jsonl);
         let texts = fold_item_texts(&session);
-        let ids: std::collections::BTreeSet<usize> = build_rows(&session, Fold::All, 100)
+        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::All, 100)
             .iter()
             .filter_map(|r| r.fold)
             .collect();
@@ -439,7 +415,7 @@ mod tests {
 
     /// Non-blank row texts, the shape every row assertion here compares.
     fn row_texts(session: &Session, fold: Fold) -> Vec<String> {
-        build_rows(session, fold, 80)
+        rows(session, fold, 80)
             .into_iter()
             .map(|r| r.text)
             .filter(|t| !t.is_empty())
@@ -459,7 +435,7 @@ mod tests {
             "\n",
         );
         assert_eq!(
-            codex_rows(jsonl, Fold::Ids(&HashSet::new())),
+            codex_rows(jsonl, Fold::Collapsed),
             vec!["▸ developer [3 lines]", "one line"]
         );
         assert_eq!(
@@ -506,14 +482,14 @@ mod tests {
     #[test]
     fn a_tag_region_in_user_text_starts_folded() {
         let text = "see below\n<ctx kind=\"x\">\n  a\n  b\n</ctx>\nthanks";
-        let roles: Vec<Role> = build_rows(&user_text_session(text), Fold::All, 80)
+        let roles: Vec<Role> = rows(&user_text_session(text), Fold::All, 80)
             .iter()
             .map(|r| r.role)
             .collect();
         assert_eq!(roles[2], Role::UserTag, "header");
         assert!(roles[3..7].iter().all(|r| *r == Role::UserText), "body");
         assert_eq!(
-            user_text_rows(text, Fold::Ids(&HashSet::new())),
+            user_text_rows(text, Fold::Collapsed),
             vec!["● user", "see below", "▸ <ctx> [4 lines]", "thanks"]
         );
         assert_eq!(
@@ -542,7 +518,7 @@ mod tests {
             // Same name rule as the preview's harness-tag check.
             "<ns:a>\nx\n</ns:a>",
         ] {
-            let rows = user_text_rows(text, Fold::Ids(&HashSet::new()));
+            let rows = user_text_rows(text, Fold::Collapsed);
             assert!(
                 rows.iter().all(|r| !r.starts_with('▸')),
                 "{text:?}: {rows:?}"
@@ -559,7 +535,7 @@ mod tests {
         })
         .to_string();
         let (session, _) = crate::session::cursor::parse(&line);
-        let rows = row_texts(&session, Fold::Ids(&HashSet::new()));
+        let rows = row_texts(&session, Fold::Collapsed);
         assert_eq!(
             rows,
             vec![
@@ -577,7 +553,7 @@ mod tests {
     fn a_line_closing_one_region_can_open_the_next() {
         let text = "<A>\nx\n</A><b>\ny\n</b>";
         assert_eq!(
-            user_text_rows(text, Fold::Ids(&HashSet::new())),
+            user_text_rows(text, Fold::Collapsed),
             vec!["● user", "▸ <A> [3 lines]", "▸ <b> [2 lines]"]
         );
         assert_eq!(
@@ -595,7 +571,7 @@ mod tests {
         );
         // Without a region to close, the shared line opens one itself.
         assert_eq!(
-            user_text_rows("</A><b>\ny\n</b>", Fold::Ids(&HashSet::new())),
+            user_text_rows("</A><b>\ny\n</b>", Fold::Collapsed),
             vec!["● user", "▸ <b> [3 lines]"]
         );
     }
@@ -611,7 +587,7 @@ mod tests {
         let (session, _) = crate::session::claude::parse(jsonl);
         let texts = fold_item_texts(&session);
         assert_eq!(texts, vec!["<a>\nx\n</a>", "<b>\ny\n</b>", "hmm"]);
-        let ids: std::collections::BTreeSet<usize> = build_rows(&session, Fold::All, 100)
+        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::All, 100)
             .iter()
             .filter_map(|r| r.fold)
             .collect();
@@ -638,7 +614,7 @@ mod tests {
         assert!(texts[2].starts_with("Bash "));
         assert_eq!(texts[3], "out");
         assert_eq!(texts[4], "a\nb");
-        let ids: std::collections::BTreeSet<usize> = build_rows(&session, Fold::All, 100)
+        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::All, 100)
             .iter()
             .filter_map(|r| r.fold)
             .collect();
@@ -679,7 +655,7 @@ mod tests {
             "\n",
         );
         let (session, _) = crate::session::claude::parse(jsonl);
-        let rows: Vec<String> = build_rows(&session, Fold::Ids(&HashSet::new()), 80)
+        let rows: Vec<String> = rows(&session, Fold::Collapsed, 80)
             .into_iter()
             .map(|r| r.text)
             .collect();
@@ -710,7 +686,7 @@ mod tests {
         let line =
             r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"a\n"}]}}"#;
         let (session, _) = crate::session::claude::parse(line);
-        let rows = build_rows(&session, Fold::All, 80);
+        let rows = rows(&session, Fold::All, 80);
         assert_eq!(rows[0].text, "▾ thinking [2 lines]");
         assert_eq!(rows.len() - 1, 2);
     }
