@@ -4,15 +4,27 @@
 
 use std::time::SystemTime;
 
-/// `2026-10-13T12:48:20.086Z` -> `2026-10-13 12:48` (as recorded, UTC).
+/// `2026-10-13T21:48:20.086+09:00` -> `2026-10-13 12:48 UTC`. A value
+/// [`parse_timestamp`] can't read is shown as recorded, cut to the minute and
+/// without the label, since its zone is unknown.
 pub fn format_timestamp(ts: &str) -> String {
-    let compact: String = ts.chars().take(16).collect();
-    compact.replacen('T', " ", 1)
+    let Some(time) = parse_timestamp(ts) else {
+        let compact: String = ts.chars().take(16).collect();
+        return compact.replacen('T', " ", 1);
+    };
+    let secs = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
+    let (h, mi) = (secs % 86_400 / 3600, secs % 3600 / 60);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02} UTC")
 }
 
 /// `2026-10-13T12:48:20.086Z` (or with a `±hh:mm` offset) as a point in time.
 /// Fractional seconds are dropped; anything else, including an out-of-range
-/// field, is `None`.
+/// field, is `None`. A value without a zone must stay `None`:
+/// [`format_timestamp`] labels whatever parses as UTC.
 pub fn parse_timestamp(ts: &str) -> Option<SystemTime> {
     let num = |s: &str| -> Option<i64> {
         s.bytes()
@@ -152,6 +164,24 @@ mod tests {
         assert_eq!(civil_from_days(20_731), (2026, 10, 5));
         assert_eq!(days_from_civil(2026, 10, 5), 20_731);
         assert_eq!(days_from_civil(2024, 2, 29), 19_782);
+    }
+
+    #[test]
+    fn format_timestamp_normalizes_to_utc() {
+        assert_eq!(
+            format_timestamp("2026-10-05T12:34:56.789Z"),
+            "2026-10-05 12:34 UTC"
+        );
+        // Offsets are undone, across the date line in either direction.
+        assert_eq!(
+            format_timestamp("2026-10-06T08:00:00+09:00"),
+            "2026-10-05 23:00 UTC"
+        );
+        assert_eq!(
+            format_timestamp("2026-10-05T20:30:00-05:00"),
+            "2026-10-06 01:30 UTC"
+        );
+        assert_eq!(format_timestamp("2026-10-05T12:34"), "2026-10-05 12:34");
     }
 
     #[test]

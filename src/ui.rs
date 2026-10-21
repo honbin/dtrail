@@ -349,8 +349,8 @@ fn conversation_status_left(view: &ConversationView) -> String {
             if n == 1 { "" } else { "s" }
         ),
     };
-    // `when` and `sid` come straight from the session file (raw timestamp / id),
-    // so sanitize before they reach the terminal — same as body and list rows.
+    // `when` and `sid` can come straight from the session file, so sanitize
+    // before they reach the terminal — same as body and list rows.
     sanitize_display(&format!(" {when}  {sid}  {pos}%{partial}{skipped}"))
 }
 
