@@ -1,4 +1,5 @@
-//! Pure date/time formatting for the list and the conversation status line.
+//! Pure date/time parsing and formatting for the list and the conversation
+//! status line.
 //! No TUI dependency, so it's unit-tested here.
 
 use std::time::SystemTime;
@@ -9,14 +10,69 @@ pub fn format_timestamp(ts: &str) -> String {
     compact.replacen('T', " ", 1)
 }
 
+/// `2026-10-13T12:48:20.086Z` (or with a `±hh:mm` offset) as a point in time.
+/// Fractional seconds are dropped; anything else, including an out-of-range
+/// field, is `None`.
+pub fn parse_timestamp(ts: &str) -> Option<SystemTime> {
+    let num = |s: &str| -> Option<i64> {
+        s.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| s.parse().ok())
+            .flatten()
+    };
+    let field = |at: usize, len: usize| num(ts.get(at..at + len)?);
+    let sep = |at: usize, c: &str| ts.get(at..at + 1) == Some(c);
+    // A fixed-width year also bounds the arithmetic below against overflow.
+    if !(sep(4, "-") && sep(7, "-") && sep(10, "T") && sep(13, ":") && sep(16, ":")) {
+        return None;
+    }
+    let (y, m, d) = (field(0, 4)?, field(5, 2)?, field(8, 2)?);
+    let (h, mi, s) = (field(11, 2)?, field(14, 2)?, field(17, 2)?);
+    if !(1..=12).contains(&m) || h > 23 || mi > 59 || s > 59 {
+        return None;
+    }
+    let days = days_from_civil(y, m as u32, d as u32);
+    // A day past the end of its month (or 0) lands in another month.
+    if civil_from_days(days) != (y, m as u32, d as u32) {
+        return None;
+    }
+    let mut zone = ts.get(19..)?;
+    if let Some(frac) = zone.strip_prefix('.') {
+        zone = frac.trim_start_matches(|c: char| c.is_ascii_digit());
+        if zone.len() == frac.len() {
+            return None;
+        }
+    }
+    let offset = match zone {
+        "Z" | "z" => 0,
+        _ => {
+            let sign = match zone.get(0..1)? {
+                "+" => 1,
+                "-" => -1,
+                _ => return None,
+            };
+            if zone.len() != 6 || zone.get(3..4) != Some(":") {
+                return None;
+            }
+            let (oh, om) = (num(zone.get(1..3)?)?, num(zone.get(4..6)?)?);
+            if oh > 23 || om > 59 {
+                return None;
+            }
+            sign * (oh * 3600 + om * 60)
+        }
+    };
+    let secs = days * 86_400 + h * 3600 + mi * 60 + s - offset;
+    Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u64::try_from(secs).ok()?))
+}
+
 /// Relative age within a week (`12m`, `3h`, `2d`), an absolute calendar date
 /// beyond that (`Oct 5`, with year if not the current one), or `—` when the
 /// time is unknown.
-pub fn relative_time(mtime: Option<SystemTime>, now: SystemTime) -> String {
-    let Some(mtime) = mtime else {
+pub fn relative_time(time: Option<SystemTime>, now: SystemTime) -> String {
+    let Some(time) = time else {
         return "—".to_string();
     };
-    let secs = now.duration_since(mtime).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = now.duration_since(time).map(|d| d.as_secs()).unwrap_or(0);
     const MIN: u64 = 60;
     const HOUR: u64 = 60 * MIN;
     const DAY: u64 = 24 * HOUR;
@@ -30,7 +86,7 @@ pub fn relative_time(mtime: Option<SystemTime>, now: SystemTime) -> String {
     } else if secs < WEEK {
         format!("{}d", secs / DAY)
     } else {
-        absolute_date(mtime, now)
+        absolute_date(time, now)
     }
 }
 
@@ -40,14 +96,14 @@ const MONTHS: [&str; 12] = [
 
 /// `Oct 5`, or `Oct 5 2025` when the year differs from now. UTC (as recorded);
 /// may be a day off near midnight for distant sessions, which is fine here.
-fn absolute_date(mtime: SystemTime, now: SystemTime) -> String {
+fn absolute_date(time: SystemTime, now: SystemTime) -> String {
     let epoch_days = |t: SystemTime| {
         (t.duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0)
             / 86400) as i64
     };
-    let (y, m, d) = civil_from_days(epoch_days(mtime));
+    let (y, m, d) = civil_from_days(epoch_days(time));
     let (cy, _, _) = civil_from_days(epoch_days(now));
     let mon = MONTHS[(m - 1) as usize];
     if y == cy {
@@ -72,6 +128,18 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y + if m <= 2 { 1 } else { 0 }, m, d)
 }
 
+/// Days since the Unix epoch from civil (Y, M, D), UTC. The inverse of
+/// [`civil_from_days`] (Howard Hinnant's `days_from_civil`).
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = i64::from(if m > 2 { m - 3 } else { m + 9 });
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +150,30 @@ mod tests {
         assert_eq!(civil_from_days(0), (1970, 1, 1)); // Unix epoch
         // 2026-10-05 is 20_731 days after the epoch.
         assert_eq!(civil_from_days(20_731), (2026, 10, 5));
+        assert_eq!(days_from_civil(2026, 10, 5), 20_731);
+        assert_eq!(days_from_civil(2024, 2, 29), 19_782);
+    }
+
+    #[test]
+    fn parse_timestamp_reads_utc_and_offsets() {
+        let at = |secs| Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
+        let base = 20_731 * 86_400 + 12 * 3600 + 34 * 60 + 56;
+        assert_eq!(parse_timestamp("2026-10-05T12:34:56Z"), at(base));
+        assert_eq!(parse_timestamp("2026-10-05T12:34:56.789Z"), at(base));
+        assert_eq!(parse_timestamp("2026-10-05T21:34:56+09:00"), at(base));
+        assert_eq!(parse_timestamp("2026-10-05T12:34:56"), None);
+        assert_eq!(parse_timestamp("2026-10-05T12x34y56Z"), None);
+        assert_eq!(parse_timestamp("2026-10-05T12:34:5あZ"), None);
+        assert_eq!(parse_timestamp("2026-10-05T12:34:56+0あ:00"), None);
+        assert_eq!(parse_timestamp("not a time"), None);
+        // Out-of-range fields, and a year too wide for the arithmetic.
+        assert_eq!(parse_timestamp("2026-02-31T00:00:00Z"), None);
+        assert_eq!(parse_timestamp("2026-10-05T99:99:99Z"), None);
+        assert_eq!(parse_timestamp("2026-10-05T12:34:5612Z"), None);
+        assert_eq!(parse_timestamp("2026-10-05T12:34:56.Z"), None);
+        assert_eq!(parse_timestamp("2026-10-05T12:34:56+24:00"), None);
+        assert_eq!(parse_timestamp("9999999999999999-01-01T00:00:00Z"), None);
+        assert!(parse_timestamp("2024-02-29T00:00:00Z").is_some());
     }
 
     #[test]

@@ -8,12 +8,13 @@
 //! function/custom tool calls and their outputs -> tool use / tool result,
 //! linked by `call_id`.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::discovery::{Agent, PreviewPicker, SessionEntry, json_lines, session_id_from_stem};
+use super::discovery::{
+    Agent, PreviewPicker, SessionEntry, json_lines, last_active, session_id_from_stem,
+};
 use super::model::{Block, ParseStats, Record, RecordKind, Session, ToolResultContent, fold_lines};
 
 /// Codex's session directory: `CODEX_HOME/sessions`, else `~/.codex/sessions`.
@@ -41,7 +42,7 @@ fn discover_in(root: &Path) -> Vec<SessionEntry> {
 
 /// Scan one Codex session file into list metadata.
 pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
-    let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
+    let last_active = last_active(path);
     let values = json_lines(path)?;
 
     let mut project: Option<String> = None;
@@ -90,7 +91,7 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
         path: path.to_path_buf(),
         session_id,
         project: project.unwrap_or_default(),
-        modified,
+        last_active,
         is_prompt: preview.has_summary(),
         summary: preview.finish(),
     })
@@ -265,6 +266,7 @@ fn str_field(payload: &Value, key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     const SAMPLE: &str = concat!(
         r#"{"type":"session_meta","timestamp":"2026-10-02T16:30:56Z","payload":{"cwd":"/Users/me/proj","session_id":"sid-1"}}"#,

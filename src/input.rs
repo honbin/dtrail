@@ -245,7 +245,7 @@ mod tests {
             path: PathBuf::from("/x"),
             session_id: "id".to_string(),
             project: project.to_string(),
-            modified: Some(SystemTime::UNIX_EPOCH),
+            last_active: Some(SystemTime::UNIX_EPOCH),
             summary: "summary".to_string(),
             is_prompt: true,
         }

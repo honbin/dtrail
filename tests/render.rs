@@ -72,7 +72,7 @@ fn an_active_list_filter_renders_on_its_own_line() {
         path: PathBuf::from("/x"),
         session_id: "id".to_string(),
         project: "/home/me/widget".to_string(),
-        modified: Some(SystemTime::UNIX_EPOCH),
+        last_active: Some(SystemTime::UNIX_EPOCH),
         summary: "add preview".to_string(),
         is_prompt: true,
     };
@@ -100,7 +100,7 @@ fn list_renders_with_entries_and_filter() {
         path: PathBuf::from("/x"),
         session_id: "id".to_string(),
         project: "/home/me/widget".to_string(),
-        modified: Some(SystemTime::UNIX_EPOCH),
+        last_active: Some(SystemTime::UNIX_EPOCH),
         summary: "add preview".to_string(),
         is_prompt: true,
     };
@@ -121,7 +121,7 @@ fn a_mixed_agent_list_tags_each_row() {
         path: PathBuf::from("/x"),
         session_id: "id".to_string(),
         project: project.to_string(),
-        modified: Some(SystemTime::UNIX_EPOCH),
+        last_active: Some(SystemTime::UNIX_EPOCH),
         summary: summary.to_string(),
         is_prompt: true,
     };

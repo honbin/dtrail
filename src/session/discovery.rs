@@ -7,7 +7,7 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use super::model::{ParseStats, Session};
 use super::{claude, codex, cursor};
+use crate::datefmt::parse_timestamp;
 use crate::tags;
 
 /// Which coding agent produced a session. Identity only — the parsing and
@@ -56,8 +57,8 @@ pub struct SessionEntry {
     pub session_id: String,
     /// Project path (working directory) the session ran in.
     pub project: String,
-    /// File mtime, or `None` when it cannot be read.
-    pub modified: Option<SystemTime>,
+    /// When the session last had activity (see [`last_active`]).
+    pub last_active: Option<SystemTime>,
     /// First real user message (command/meta wrappers skipped), else a raw
     /// fallback (see [`PreviewPicker`]); empty if none.
     pub summary: String,
@@ -72,7 +73,7 @@ pub fn discover() -> Vec<SessionEntry> {
     let mut entries = claude::discover();
     entries.extend(codex::discover());
     entries.extend(cursor::discover());
-    entries.sort_by_key(|e| Reverse(e.modified));
+    entries.sort_by_key(|e| Reverse(e.last_active));
     entries
 }
 
@@ -89,7 +90,7 @@ pub fn discover_dir(root: &Path) -> Vec<SessionEntry> {
             Agent::Cursor => cursor::scan(p),
         })
         .collect();
-    entries.sort_by_key(|e| Reverse(e.modified));
+    entries.sort_by_key(|e| Reverse(e.last_active));
     entries
 }
 
@@ -202,6 +203,49 @@ pub fn detect(input: &str) -> Agent {
 /// Like [`detect`] but reads only the head of a file (for `discover_dir`).
 fn agent_of_file(path: &Path) -> Option<Agent> {
     json_lines(path)?.find_map(|value| agent_of_value(&value))
+}
+
+/// When a session last had activity: the last record `timestamp` in the file,
+/// else the file mtime. The mtime alone also moves when something touches the
+/// file without adding a record, which would lift an idle session to the top of
+/// the list.
+pub(crate) fn last_active(path: &Path) -> Option<SystemTime> {
+    last_record_timestamp(path).or_else(|| fs::metadata(path).and_then(|m| m.modified()).ok())
+}
+
+/// Reads only a window at the end of the file, widening it until a timestamped
+/// line is found: a single tool result can outgrow any fixed window.
+fn last_record_timestamp(path: &Path) -> Option<SystemTime> {
+    const FIRST_WINDOW: u64 = 16 * 1024;
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut window = FIRST_WINDOW;
+    loop {
+        let start = len.saturating_sub(window);
+        file.seek(SeekFrom::Start(start)).ok()?;
+        let mut bytes = Vec::new();
+        (&mut file).take(window).read_to_end(&mut bytes).ok()?;
+        let lines = if start == 0 {
+            &bytes[..]
+        } else {
+            // The window may begin mid-line; that partial line is not JSON.
+            bytes
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(&[][..], |i| &bytes[i + 1..])
+        };
+        // Relies on file order being chronological (see `Session`), so the
+        // lines before the last timestamped one need not be parsed.
+        let newest = String::from_utf8_lossy(lines)
+            .lines()
+            .rev()
+            .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+            .find_map(|v| parse_timestamp(v.get("timestamp")?.as_str()?));
+        if newest.is_some() || start == 0 {
+            return newest;
+        }
+        window *= 4;
+    }
 }
 
 /// The JSON value of each line of a file, skipping blank and unparsable lines.
@@ -420,6 +464,55 @@ mod tests {
         let (session, stats) = result.unwrap();
         assert_eq!(session.records.len(), 1);
         assert_eq!(stats.skipped_lines, 0);
+    }
+
+    #[test]
+    fn last_active_is_the_newest_record_not_the_mtime() {
+        let tmp = std::env::temp_dir().join(format!("dtrail-active-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let at = |ts: &str| parse_timestamp(ts).unwrap();
+
+        // Written now, so the mtime is far newer than any record.
+        let touched = tmp.join("touched.jsonl");
+        fs::write(
+            &touched,
+            concat!(
+                r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z"}"#,
+                "\n",
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:05:00Z"}"#,
+                "\n",
+                r#"{"type":"custom-title"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        // A last record larger than the first tail window.
+        let big = tmp.join("big.jsonl");
+        let huge = "x".repeat(200 * 1024);
+        fs::write(
+            &big,
+            format!(
+                "{}\n{{\"type\":\"user\",\"timestamp\":\"2026-01-02T01:00:00Z\",\"t\":\"{huge}\"}}\n",
+                r#"{"type":"user","timestamp":"2026-01-02T00:00:00Z"}"#,
+            ),
+        )
+        .unwrap();
+
+        let untimed = tmp.join("untimed.jsonl");
+        fs::write(&untimed, "{\"role\":\"user\"}\n").unwrap();
+        let mtime = fs::metadata(&untimed).unwrap().modified().unwrap();
+
+        let results = (
+            last_active(&touched),
+            last_active(&big),
+            last_active(&untimed),
+        );
+        fs::remove_dir_all(&tmp).ok();
+
+        assert_eq!(results.0, Some(at("2026-01-01T00:05:00Z")));
+        assert_eq!(results.1, Some(at("2026-01-02T01:00:00Z")));
+        assert_eq!(results.2, Some(mtime));
     }
 
     #[cfg(unix)]

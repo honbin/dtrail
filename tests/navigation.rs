@@ -111,7 +111,7 @@ fn app_with_entries(n: usize) -> App {
             path: PathBuf::from("/x"),
             session_id: format!("id{i}"),
             project: format!("/p/proj{i}"),
-            modified: Some(SystemTime::UNIX_EPOCH),
+            last_active: Some(SystemTime::UNIX_EPOCH),
             summary: format!("summary {i}"),
             is_prompt: true,
         })

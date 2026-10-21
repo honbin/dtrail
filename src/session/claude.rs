@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use super::content::{first_block_text, parse_content};
 use super::discovery::{
-    Agent, PreviewPicker, SessionEntry, decode_project_dir, json_lines, session_id_from_stem,
+    Agent, PreviewPicker, SessionEntry, decode_project_dir, json_lines, last_active,
+    session_id_from_stem,
 };
 use super::model::{ParseStats, Record, RecordKind, Session, fold_lines};
 
@@ -64,7 +65,7 @@ pub(crate) fn scan(path: &Path) -> Option<SessionEntry> {
 }
 
 fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
-    let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
+    let last_active = last_active(path);
     let session_id = session_id_from_stem(path);
 
     let values = json_lines(path)?;
@@ -91,7 +92,7 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         path: path.to_path_buf(),
         session_id,
         project: project.unwrap_or_else(|| decode_project_dir(project_dir)),
-        modified,
+        last_active,
         is_prompt: preview.has_summary(),
         summary: preview.finish(),
     })

@@ -142,7 +142,7 @@ fn list_line(
     width: u16,
     show_agent: bool,
 ) -> Line<'static> {
-    let when = relative_time(entry.modified, now);
+    let when = relative_time(entry.last_active, now);
     let project = short_project(&entry.project);
     let meta = !entry.is_prompt;
     // A scaffolding-only preview is kept raw for filtering; only its display
@@ -422,7 +422,7 @@ mod tests {
             path: PathBuf::from("/x"),
             session_id: "id".to_string(),
             project: "/home/me/widget".to_string(),
-            modified: Some(SystemTime::UNIX_EPOCH),
+            last_active: Some(SystemTime::UNIX_EPOCH),
             summary: summary.to_string(),
             is_prompt,
         }

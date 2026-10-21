@@ -73,7 +73,9 @@ fn project_dir_of(path: &Path) -> &Path {
 }
 
 fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
-    let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
+    // Not `last_active`: with no timestamps it would read the whole file only to
+    // fall back to the mtime.
+    let last_active = fs::metadata(path).and_then(|m| m.modified()).ok();
     let session_id = session_id_from_stem(path);
 
     let values = json_lines(path)?;
@@ -100,7 +102,7 @@ fn scan_entry(path: &Path, project_dir: &Path) -> Option<SessionEntry> {
         path: path.to_path_buf(),
         session_id,
         project: decode_project_dir(project_dir),
-        modified,
+        last_active,
         is_prompt: preview.has_summary(),
         summary: preview.finish(),
     })
