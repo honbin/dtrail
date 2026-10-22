@@ -7,6 +7,12 @@
 //! above and below it: 0 for plain movement (the cursor may sit on an edge),
 //! more for a search jump so a match never lands on an edge.
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    pub cursor: usize,
+    pub offset: usize,
+}
+
 #[derive(Default)]
 pub struct Scroll {
     offset: usize,
@@ -99,15 +105,18 @@ impl Scroll {
         };
     }
 
-    pub fn snapshot(&self) -> (usize, usize) {
-        (self.cursor, self.offset)
+    pub fn snapshot(&self) -> Position {
+        Position {
+            cursor: self.cursor,
+            offset: self.offset,
+        }
     }
 
-    /// Restore a (cursor, offset) captured by [`Self::snapshot`], then re-assert
-    /// visibility in case the row set shrank in between.
-    pub fn restore(&mut self, cursor: usize, offset: usize, len: usize) {
-        self.cursor = cursor;
-        self.offset = offset;
+    /// Restore a position, then re-assert visibility in case the row set
+    /// shrank in between.
+    pub fn restore(&mut self, at: Position, len: usize) {
+        self.cursor = at.cursor;
+        self.offset = at.offset;
         self.reclamp(len);
     }
 

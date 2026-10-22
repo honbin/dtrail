@@ -6,7 +6,7 @@
 //! fold, search) lives in [`ConversationView`].
 
 use crate::conversation::ConversationView;
-use crate::scroll::Scroll;
+use crate::scroll::{Position, Scroll};
 use crate::session::discovery;
 use crate::session::model::ParseStats;
 use crate::session::{Agent, Session, SessionEntry};
@@ -500,7 +500,13 @@ impl App {
             .filter(|_| !to_first_match)
             .and_then(|idx| self.filtered.iter().position(|&i| i == idx))
             .unwrap_or(0);
-        self.list.restore(pos, 0, self.filtered.len());
+        self.list.restore(
+            Position {
+                cursor: pos,
+                offset: 0,
+            },
+            self.filtered.len(),
+        );
     }
 
     pub fn conversation(&self) -> Option<&ConversationView> {

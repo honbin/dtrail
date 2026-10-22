@@ -4,13 +4,21 @@
 
 use std::collections::HashSet;
 
-use crate::scroll::Scroll;
+use crate::scroll::{Position, Scroll};
 use crate::session::Session;
 use crate::view::{self, Row, build_rows};
 
 /// Rows of context kept above and below a search match so it never lands on an
 /// edge. Plain cursor movement uses no scrolloff (the cursor reaches the edges).
 const SEARCH_SCROLLOFF: usize = 3;
+
+/// A query being typed: where Esc returns to, and whether stepping to a match
+/// (Up/Down) already applied it, so Enter keeps that match.
+#[derive(Clone, Copy)]
+struct IncrementalSearch {
+    origin: Position,
+    applied: bool,
+}
 
 pub struct ConversationView {
     session: Session,
@@ -37,12 +45,8 @@ pub struct ConversationView {
     /// visited, as after a fold moved the rows from under the cursor; `N` still
     /// goes to the one before it.
     match_ahead: bool,
-    /// Cursor/offset captured when an incremental search began, so Esc can
-    /// return there. `Some` only while a search is in progress.
-    search_origin: Option<(usize, usize)>,
-    /// Whether the query being typed was already applied by stepping to a
-    /// match (Up/Down) before Enter, so Enter keeps that match.
-    search_applied: bool,
+    /// `Some` only while a query is being typed.
+    incremental: Option<IncrementalSearch>,
     /// A query to apply on the next layout, carried in from the list filter so
     /// it is applied at the real (full) width rather than the split width.
     carried_search: Option<String>,
@@ -70,8 +74,7 @@ impl ConversationView {
             matches: Vec::new(),
             match_cursor: 0,
             match_ahead: false,
-            search_origin: None,
-            search_applied: false,
+            incremental: None,
             carried_search: None,
             visual_anchor: None,
             skipped_lines: 0,
@@ -294,17 +297,25 @@ impl ConversationView {
 
     /// Begin an incremental search, remembering where to return on cancel.
     pub fn begin_search(&mut self) {
-        self.search_origin = Some(self.scroll.snapshot());
-        self.search_applied = false;
+        self.incremental = Some(IncrementalSearch {
+            origin: self.scroll.snapshot(),
+            applied: false,
+        });
+    }
+
+    fn typed_query_applied(&self, query: &str) -> bool {
+        self.incremental.is_some_and(|s| s.applied) && query == self.search_query
     }
 
     /// Step to the next or previous match of the query being typed, applying
     /// it first if it isn't yet; that first step lands on the match nearest the
     /// origin, after it going forward or before it going back.
     pub fn step_search(&mut self, query: &str, forward: bool) {
-        if !(self.search_applied && query == self.search_query) {
+        if !self.typed_query_applied(query) {
             self.set_search(query);
-            self.search_applied = true;
+            if let Some(search) = &mut self.incremental {
+                search.applied = true;
+            }
             if forward {
                 return;
             }
@@ -319,23 +330,21 @@ impl ConversationView {
     /// Apply `query` unless stepping already did, keep the match position, and
     /// end the incremental session (Enter).
     pub fn accept_search(&mut self, query: &str) {
-        if !(self.search_applied && query == self.search_query) {
+        if !self.typed_query_applied(query) {
             self.set_search(query);
         }
-        self.search_origin = None;
-        self.search_applied = false;
+        self.incremental = None;
     }
 
     /// Abandon the search and return to where it began (Esc).
     pub fn cancel_search(&mut self) {
-        let origin = self.search_origin.take();
-        self.search_applied = false;
+        let origin = self.incremental.take().map(|s| s.origin);
         self.search_query.clear();
         self.collapsed.clear();
         self.match_ahead = false;
         self.rebuild(self.rows_width.max(1));
         match origin {
-            Some((cursor, offset)) => self.scroll.restore(cursor, offset, self.rows.len()),
+            Some(origin) => self.scroll.restore(origin, self.rows.len()),
             None => self.scroll.reclamp(self.rows.len()),
         }
     }
@@ -345,20 +354,20 @@ impl ConversationView {
     pub fn set_search(&mut self, query: &str) {
         self.search_query = query.to_string();
         // Only stepping marks the typed query applied; any other caller unmarks it.
-        self.search_applied = false;
+        if let Some(search) = &mut self.incremental {
+            search.applied = false;
+        }
         self.collapsed.clear();
         self.match_ahead = false;
         // Rebuild so matches inside folded items are revealed and indexed.
         self.rebuild(self.rows_width.max(1));
 
-        let anchor = self
-            .search_origin
-            .map(|(c, _)| c)
-            .unwrap_or(self.scroll.cursor());
+        let origin = self.incremental.map(|s| s.origin);
+        let anchor = origin.map_or(self.scroll.cursor(), |o| o.cursor);
         if self.search_query.is_empty() {
             // Deleting the whole query returns to the starting position.
-            if let Some((c, o)) = self.search_origin {
-                self.scroll.restore(c, o, self.rows.len());
+            if let Some(origin) = origin {
+                self.scroll.restore(origin, self.rows.len());
             }
             return;
         }
