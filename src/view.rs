@@ -124,12 +124,18 @@ fn system_folds(text: &str) -> bool {
     text.trim_end().contains('\n')
 }
 
+struct UnknownRun {
+    row: usize,
+    block_type: String,
+    count: usize,
+}
+
 struct Builder<'a> {
     logical: Vec<Row>,
     expanded: &'a HashSet<usize>,
     next_fold_id: usize,
-    /// Row index, block type and count of the trailing unknown placeholder.
-    unknown_run: Option<(usize, String, usize)>,
+    /// The trailing unknown placeholder, if the last row is one.
+    unknown_run: Option<UnknownRun>,
     /// Each fold's searchable text, collected only for [`fold_item_texts`].
     fold_texts: Option<Vec<String>>,
     /// An agent writes one reply as several records split by tool calls; a
@@ -260,15 +266,19 @@ impl<'a> Builder<'a> {
     /// a long run of the same unknown item, which would otherwise fill a screen.
     fn unknown(&mut self, block_type: &str) {
         let label = format!("[unknown block: {block_type}]");
-        if let Some((idx, kind, count)) = &mut self.unknown_run
-            && *idx + 1 == self.logical.len()
-            && kind == block_type
+        if let Some(run) = &mut self.unknown_run
+            && run.row + 1 == self.logical.len()
+            && run.block_type == block_type
         {
-            *count += 1;
-            self.logical[*idx].text = format!("{label} ×{count}");
+            run.count += 1;
+            self.logical[run.row].text = format!("{label} ×{}", run.count);
             return;
         }
-        self.unknown_run = Some((self.logical.len(), block_type.to_string(), 1));
+        self.unknown_run = Some(UnknownRun {
+            row: self.logical.len(),
+            block_type: block_type.to_string(),
+            count: 1,
+        });
         self.plain(Role::System, &label);
     }
 

@@ -294,7 +294,7 @@ impl App {
         match self.focus {
             Focus::List => {
                 self.filter_query.clear();
-                self.recompute_filter(false);
+                self.recompute_filter();
             }
             Focus::Conversation => {
                 if let Some(view) = self.conversation.as_mut() {
@@ -306,8 +306,11 @@ impl App {
 
     fn apply_filter(&mut self) {
         self.filter_query = self.input_buffer.clone();
+        self.recompute_filter();
         // A typed query lands on its first match so Enter opens it.
-        self.recompute_filter(!self.filter_query.is_empty());
+        if !self.filter_query.is_empty() {
+            self.list.to_top(self.filtered.len());
+        }
     }
 
     /// Next result: down one row in the list, or the next match in the
@@ -367,7 +370,7 @@ impl App {
     /// Toggle hiding command-only/empty-preview sessions (default off).
     pub fn toggle_prose_only(&mut self) {
         self.prose_only = !self.prose_only;
-        self.recompute_filter(false);
+        self.recompute_filter();
     }
 
     /// Whether the loaded sessions span more than one agent. Gates both the
@@ -391,7 +394,7 @@ impl App {
             Some(Agent::Codex) => Some(Agent::Cursor),
             Some(Agent::Cursor) => None,
         };
-        self.recompute_filter(false);
+        self.recompute_filter();
     }
 
     pub fn list_selected(&self) -> usize {
@@ -473,11 +476,10 @@ impl App {
         });
     }
 
-    /// Re-filter the list. `to_first_match` puts the cursor on the first row;
-    /// otherwise it stays on the same session when that session survives (so
-    /// widening the list or toggling `p` doesn't land on an unrelated one), and
-    /// goes to the top when it doesn't.
-    fn recompute_filter(&mut self, to_first_match: bool) {
+    /// Re-filter the list. The cursor stays on the same session when that
+    /// session survives (so widening the list or toggling `p` doesn't land on
+    /// an unrelated one), and goes to the top when it doesn't.
+    fn recompute_filter(&mut self) {
         let current = self.selected_entry_index();
         // Agent filter, prose-only filter, and text query compose with AND.
         let q = self.filter_query.to_lowercase();
@@ -497,7 +499,6 @@ impl App {
             .map(|(i, _)| i)
             .collect();
         let pos = current
-            .filter(|_| !to_first_match)
             .and_then(|idx| self.filtered.iter().position(|&i| i == idx))
             .unwrap_or(0);
         self.list.restore(

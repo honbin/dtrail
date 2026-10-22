@@ -39,9 +39,15 @@ pub fn parse_timestamp(ts: &str) -> Option<SystemTime> {
     if ts.len() < SHAPE.len() || !SHAPE.iter().zip(ts.as_bytes()).all(fits) {
         return None;
     }
-    // Digits by the shape check, so these slices and parses can't fail.
-    let n = |at: usize, len: usize| ts[at..at + len].parse::<i64>().unwrap();
-    let (y, m, d, h, mi, s) = (n(0, 4), n(5, 2), n(8, 2), n(11, 2), n(14, 2), n(17, 2));
+    let n = |at: usize, len: usize| ts.get(at..at + len)?.parse::<i64>().ok();
+    let (y, m, d, h, mi, s) = (
+        n(0, 4)?,
+        n(5, 2)?,
+        n(8, 2)?,
+        n(11, 2)?,
+        n(14, 2)?,
+        n(17, 2)?,
+    );
     let days = days_from_civil(y, m as u32, d as u32);
     // An impossible month or day (Feb 31, month 13) lands on another date.
     if h > 23 || mi > 59 || s > 59 || civil_from_days(days) != (y, m as u32, d as u32) {
