@@ -14,10 +14,10 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::content::{first_block_text, parse_content};
-use super::discovery::{
-    Agent, PreviewPicker, SessionEntry, decode_project_dir, json_lines, session_id_from_stem,
+use super::model::{
+    Agent, Block, ParseStats, Record, RecordKind, Session, SessionEntry, fold_lines,
 };
-use super::model::{Block, ParseStats, Record, RecordKind, Session, fold_lines};
+use super::scan::{PreviewPicker, decode_project_dir, json_lines, session_id_from_stem};
 
 /// Cursor's agent-transcript root: `~/.cursor/projects`.
 fn base_dir() -> PathBuf {
@@ -42,7 +42,7 @@ fn discover_in(projects_dir: &Path) -> Vec<SessionEntry> {
         }
         // Transcripts are nested under agent-transcripts/<uuid>/, so walk down.
         let mut files = Vec::new();
-        super::discovery::collect_jsonl(&dir_path, &mut files);
+        super::scan::collect_jsonl(&dir_path, &mut files);
         for path in files {
             if let Some(entry) = scan_entry(&path, &dir_path) {
                 entries.push(entry);

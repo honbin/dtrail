@@ -13,10 +13,11 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::content::str_field;
-use super::discovery::{
-    Agent, PreviewPicker, SessionEntry, json_lines, last_active, session_id_from_stem,
+use super::model::{
+    Agent, Block, ParseStats, Record, RecordKind, Session, SessionEntry, ToolResultContent,
+    fold_lines,
 };
-use super::model::{Block, ParseStats, Record, RecordKind, Session, ToolResultContent, fold_lines};
+use super::scan::{PreviewPicker, json_lines, last_active, session_id_from_stem};
 
 /// Codex's session directory: `CODEX_HOME/sessions`, else `~/.codex/sessions`.
 fn base_dir() -> PathBuf {
@@ -37,7 +38,7 @@ pub fn discover() -> Vec<SessionEntry> {
 fn discover_in(root: &Path) -> Vec<SessionEntry> {
     // Sessions are nested under date directories, so walk recursively.
     let mut files = Vec::new();
-    super::discovery::collect_jsonl(root, &mut files);
+    super::scan::collect_jsonl(root, &mut files);
     files.iter().filter_map(|p| scan(p)).collect()
 }
 

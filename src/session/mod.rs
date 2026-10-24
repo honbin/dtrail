@@ -7,6 +7,9 @@ mod content;
 pub mod cursor;
 pub mod discovery;
 pub mod model;
+mod scan;
 
-pub use discovery::{Agent, SessionEntry, discover};
-pub use model::{Block, ParseStats, Record, RecordKind, Session, ToolResultContent};
+pub use discovery::discover;
+pub use model::{
+    Agent, Block, ParseStats, Record, RecordKind, Session, SessionEntry, ToolResultContent,
+};

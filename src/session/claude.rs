@@ -10,11 +10,10 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::content::{first_block_text, parse_content};
-use super::discovery::{
-    Agent, PreviewPicker, SessionEntry, decode_project_dir, json_lines, last_active,
-    session_id_from_stem,
+use super::model::{Agent, ParseStats, Record, RecordKind, Session, SessionEntry, fold_lines};
+use super::scan::{
+    PreviewPicker, decode_project_dir, json_lines, last_active, session_id_from_stem,
 };
-use super::model::{ParseStats, Record, RecordKind, Session, fold_lines};
 
 /// Claude's session directory: `CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`.
 fn base_dir() -> PathBuf {

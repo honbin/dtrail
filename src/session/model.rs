@@ -1,6 +1,59 @@
 //! Internal model for display, kept separate from the raw JSONL shape.
 
+use std::path::PathBuf;
+use std::time::SystemTime;
+
 use serde_json::Value;
+
+/// Which coding agent produced a session. Identity only — the parsing and
+/// discovery for each live in that agent's module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Agent {
+    Claude,
+    Codex,
+    Cursor,
+}
+
+impl Agent {
+    /// Short name shown as the per-row tag in the session list.
+    pub fn label(self) -> &'static str {
+        match self {
+            Agent::Claude => "Claude",
+            Agent::Codex => "Codex",
+            Agent::Cursor => "Cursor",
+        }
+    }
+
+    /// Full name shown in the status line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Agent::Claude => "Claude Code",
+            Agent::Codex => "Codex",
+            Agent::Cursor => "Cursor",
+        }
+    }
+}
+
+/// One row in the session list. Holds only what the list needs; the body is
+/// parsed lazily when the session is opened.
+#[derive(Debug, Clone)]
+pub struct SessionEntry {
+    pub agent: Agent,
+    pub path: PathBuf,
+    /// File stem; usually the session id.
+    pub session_id: String,
+    /// Project path (working directory) the session ran in.
+    pub project: String,
+    /// When the session last had activity (see [`super::scan::last_active`]).
+    pub last_active: Option<SystemTime>,
+    /// First real user message (command/meta wrappers skipped), else a raw
+    /// fallback (see [`super::scan::PreviewPicker`]); empty if none.
+    pub summary: String,
+    /// Whether `summary` is a real prompt. Judged once while scanning, since
+    /// `summary` is joined onto one line and no longer has the shape the
+    /// judgment reads.
+    pub is_prompt: bool,
+}
 
 /// Outcome of parsing a session file, shared by every agent's parser.
 #[derive(Debug, Default)]
