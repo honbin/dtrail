@@ -248,6 +248,7 @@ mod tests {
     fn summary_skips_a_meta_opener_then_reads_the_array_prompt() {
         // Mirrors a real envelope: meta records, a command-only string user
         // message, then the real prompt as an array-content user message.
+        // The isMeta text is untagged so only the flag keeps it out.
         let tmp = std::env::temp_dir().join(format!("dtrail-claude-env-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("sess-x.jsonl");
@@ -257,6 +258,8 @@ mod tests {
                 r#"{"type":"mode"}"#,
                 "\n",
                 r#"{"type":"file-history-snapshot"}"#,
+                "\n",
+                r#"{"type":"user","isMeta":true,"cwd":"/p","message":{"role":"user","content":"injected note"}}"#,
                 "\n",
                 r#"{"type":"user","cwd":"/p","message":{"role":"user","content":"<command-name>/clear</command-name>"}}"#,
                 "\n",

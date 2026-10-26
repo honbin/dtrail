@@ -11,7 +11,11 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 fn render(app: &mut App) -> String {
-    let backend = TestBackend::new(80, 20);
+    render_at(app, 80)
+}
+
+fn render_at(app: &mut App, width: u16) -> String {
+    let backend = TestBackend::new(width, 20);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(|f| ui::draw(f, app)).unwrap();
     let buffer = terminal.backend().buffer();
@@ -38,6 +42,8 @@ fn conversation_renders_without_panicking() {
     let mut app = fixture_session();
     let out = render(&mut app);
     assert!(out.contains("user"));
+    // The fixture's broken last line is reported, not silently dropped.
+    assert!(out.contains("(1 unparsed line hidden)"), "got: {out}");
 
     // Exercise the fold and search draw paths too.
     if let Some(view) = app.conversation_mut() {
@@ -134,6 +140,37 @@ fn a_mixed_agent_list_tags_each_row() {
     assert!(out.contains("Claude"));
     assert!(out.contains("Codex"));
     assert!(out.contains("alpha") && out.contains("beta"));
+}
+
+#[test]
+fn a_wide_terminal_shows_the_list_beside_the_selected_conversation() {
+    let mut entry = SessionEntry {
+        agent: Agent::Claude,
+        path: PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/minimal-session.jsonl"
+        )),
+        session_id: "id".to_string(),
+        project: "/home/me/widget".to_string(),
+        last_active: Some(SystemTime::UNIX_EPOCH),
+        summary: "add preview".to_string(),
+        is_prompt: true,
+    };
+    let mut app = App::with_entries(vec![entry.clone()]);
+    app.sync_selection();
+    let out = render_at(&mut app, 120);
+    assert!(out.contains("add preview"), "list: {out}");
+    assert!(out.contains("hello"), "conversation: {out}");
+
+    // Below the split width only the focused pane (the list) is drawn.
+    entry.summary = "narrow".to_string();
+    let mut app = App::with_entries(vec![entry]);
+    app.sync_selection();
+    let out = render_at(&mut app, 80);
+    assert!(
+        out.contains("narrow") && !out.contains("hello"),
+        "got: {out}"
+    );
 }
 
 #[test]

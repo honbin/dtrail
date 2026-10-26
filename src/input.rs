@@ -300,27 +300,37 @@ mod tests {
 
     #[test]
     fn entering_a_head_only_view_shows_loading_then_loads_the_whole_file() {
-        let fixture = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/minimal-session.jsonl"
+        let tmp = std::env::temp_dir().join(format!("dtrail-big-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("big.jsonl");
+        let line = format!(
+            r#"{{"type":"user","sessionId":"s","message":{{"role":"user","content":"{}"}}}}"#,
+            "x".repeat(1000)
         );
+        // Past the size above which browsing parses only the head.
+        std::fs::write(&path, format!("{line}\n").repeat(6 * 1024)).unwrap();
+        let size = std::fs::metadata(&path).unwrap().len();
         let mut loadable = entry("/a");
-        loadable.path = PathBuf::from(fixture);
+        loadable.path = path;
         let mut app = App::with_entries(vec![loadable]);
         app.sync_list_viewport(10);
         app.sync_selection();
-        // Stand in for a file large enough to have been loaded head-only.
-        app.conversation_mut()
-            .unwrap()
-            .set_partial(50 * 1024 * 1024);
+        let browsed = app.conversation().map(|v| v.partial_of());
         let mut input = InputState::default();
 
         input.handle(&mut app, code(KeyCode::Enter));
-        assert_eq!(app.focus(), Focus::Conversation);
-        assert_eq!(app.notice(), Some("loading 50 MB…"));
+        let focus = app.focus();
+        let notice = app.notice().map(str::to_string);
 
         // The event loop runs the load after drawing the notice.
-        assert!(app.finish_pending_load());
+        let loaded = app.finish_pending_load();
+        std::fs::remove_dir_all(&tmp).ok();
+
+        assert_eq!(browsed, Some(Some(size)));
+        assert_eq!(focus, Focus::Conversation);
+        let loading = format!("loading {}…", crate::app::megabytes(size));
+        assert_eq!(notice.as_deref(), Some(loading.as_str()));
+        assert!(loaded);
         assert_eq!(app.notice(), None);
         assert_eq!(app.conversation().unwrap().partial_of(), None);
         assert!(!app.finish_pending_load(), "nothing left to load");
