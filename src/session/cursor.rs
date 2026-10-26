@@ -18,6 +18,7 @@ use super::model::{
     Agent, Block, ParseStats, Record, RecordKind, Session, SessionEntry, fold_lines,
 };
 use super::scan::{PreviewPicker, decode_project_dir, json_lines, session_id_from_stem};
+use crate::tags::USER_QUERY_TAG;
 
 /// Cursor's agent-transcript root: `~/.cursor/projects`.
 fn base_dir() -> PathBuf {
@@ -114,10 +115,6 @@ fn preview_text(value: &Value) -> Option<String> {
     let text = first_block_text(value.get("message")?.get("content")?)?;
     Some(user_query(&text).unwrap_or(text))
 }
-
-/// Tag Cursor wraps the typed prompt in, apart from the injected context
-/// around it. The body view keeps it unfolded for the same reason.
-pub(crate) const USER_QUERY_TAG: &str = "user_query";
 
 /// Inner text of the first `<user_query>…</user_query>`, trimmed, if present.
 fn user_query(text: &str) -> Option<String> {

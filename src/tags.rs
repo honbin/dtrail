@@ -3,7 +3,10 @@
 //! both read a message the same way. Nothing here knows tag names except
 //! Cursor's prompt wrapper.
 
-use crate::session::cursor::USER_QUERY_TAG;
+/// Tag Cursor wraps the typed prompt in, apart from the injected context
+/// around it. The preview reads the prompt from inside it, and the body view
+/// keeps it unfolded for the same reason.
+pub(crate) const USER_QUERY_TAG: &str = "user_query";
 
 /// Lines `start..=end` of a text block, from a line opening `<name ...>` to
 /// the line closing it with `</name>`. Either line may also carry text, as in
