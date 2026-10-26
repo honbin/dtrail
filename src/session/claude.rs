@@ -245,27 +245,6 @@ mod tests {
     }
 
     #[test]
-    fn summary_reads_an_array_content_user_message() {
-        let tmp = std::env::temp_dir().join(format!("dtrail-claude-arr-{}", std::process::id()));
-        fs::create_dir_all(&tmp).unwrap();
-        let path = tmp.join("sess-x.jsonl");
-        fs::write(
-            &path,
-            // A user message whose content is an array of blocks, not a string.
-            concat!(
-                r#"{"type":"user","cwd":"/p","message":{"role":"user","content":[{"type":"text","text":"array prompt"}]}}"#,
-                "\n",
-            ),
-        )
-        .unwrap();
-
-        let e = scan(&path).unwrap();
-        fs::remove_dir_all(&tmp).ok();
-
-        assert_eq!(e.summary, "array prompt");
-    }
-
-    #[test]
     fn summary_skips_a_meta_opener_then_reads_the_array_prompt() {
         // Mirrors a real envelope: meta records, a command-only string user
         // message, then the real prompt as an array-content user message.

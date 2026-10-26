@@ -404,25 +404,6 @@ mod tests {
         build_rows(session, &expanded, width)
     }
 
-    #[test]
-    fn fold_item_texts_align_with_build_rows_ids() {
-        let jsonl = concat!(
-            r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
-            "\n",
-            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"out"}]}}"#,
-            "\n",
-        );
-        let (session, _) = crate::session::claude::parse(jsonl);
-        let texts = fold_item_texts(&session);
-        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::Expanded, 100)
-            .iter()
-            .filter_map(|r| r.fold)
-            .collect();
-        // Same count, and ids are exactly 0..len (no drift between the two).
-        assert_eq!(ids.len(), texts.len());
-        assert!(ids.into_iter().eq(0..texts.len()));
-    }
-
     /// Non-blank row texts, the shape every row assertion here compares.
     fn row_texts(session: &Session, fold: Fold) -> Vec<String> {
         rows(session, fold, 80)
@@ -587,27 +568,9 @@ mod tests {
     }
 
     #[test]
-    fn tag_regions_align_with_fold_item_texts() {
-        let jsonl = concat!(
-            r#"{"type":"user","message":{"content":"<a>\nx\n</a>\nhi\n<b>\ny\n</b>"}}"#,
-            "\n",
-            r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"}]}}"#,
-            "\n",
-        );
-        let (session, _) = crate::session::claude::parse(jsonl);
-        let texts = fold_item_texts(&session);
-        assert_eq!(texts, vec!["<a>\nx\n</a>", "<b>\ny\n</b>", "hmm"]);
-        let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::Expanded, 100)
-            .iter()
-            .filter_map(|r| r.fold)
-            .collect();
-        assert!(ids.into_iter().eq(0..texts.len()));
-    }
-
-    #[test]
     fn every_fold_kind_aligns_with_fold_item_texts() {
         let jsonl = concat!(
-            r#"{"type":"user","message":{"content":"<ctx>\nx\n</ctx>\nhello"}}"#,
+            r#"{"type":"user","message":{"content":"<ctx>\nx\n</ctx>\nhello\n<b>\ny\n</b>"}}"#,
             "\n",
             r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
             "\n",
@@ -618,12 +581,13 @@ mod tests {
         );
         let (session, _) = crate::session::claude::parse(jsonl);
         let texts = fold_item_texts(&session);
-        assert_eq!(texts.len(), 5);
+        assert_eq!(texts.len(), 6);
         assert_eq!(texts[0], "<ctx>\nx\n</ctx>");
-        assert_eq!(texts[1], "hmm");
-        assert!(texts[2].starts_with("Bash "));
-        assert_eq!(texts[3], "out");
-        assert_eq!(texts[4], "a\nb");
+        assert_eq!(texts[1], "<b>\ny\n</b>");
+        assert_eq!(texts[2], "hmm");
+        assert!(texts[3].starts_with("Bash "));
+        assert_eq!(texts[4], "out");
+        assert_eq!(texts[5], "a\nb");
         let ids: std::collections::BTreeSet<usize> = rows(&session, Fold::Expanded, 100)
             .iter()
             .filter_map(|r| r.fold)
