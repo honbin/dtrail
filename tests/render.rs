@@ -144,7 +144,7 @@ fn a_mixed_agent_list_tags_each_row() {
 
 #[test]
 fn a_wide_terminal_shows_the_list_beside_the_selected_conversation() {
-    let mut entry = SessionEntry {
+    let entry = SessionEntry {
         agent: Agent::Claude,
         path: PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -156,19 +156,16 @@ fn a_wide_terminal_shows_the_list_beside_the_selected_conversation() {
         summary: "add preview".to_string(),
         is_prompt: true,
     };
-    let mut app = App::with_entries(vec![entry.clone()]);
+    let mut app = App::with_entries(vec![entry]);
     app.sync_selection();
     let out = render_at(&mut app, 120);
     assert!(out.contains("add preview"), "list: {out}");
     assert!(out.contains("hello"), "conversation: {out}");
 
     // Below the split width only the focused pane (the list) is drawn.
-    entry.summary = "narrow".to_string();
-    let mut app = App::with_entries(vec![entry]);
-    app.sync_selection();
     let out = render_at(&mut app, 80);
     assert!(
-        out.contains("narrow") && !out.contains("hello"),
+        out.contains("add preview") && !out.contains("hello"),
         "got: {out}"
     );
 }
